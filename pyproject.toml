@@ -1,0 +1,26 @@
+[project]
+name = "close-mongo-ops-manager"
+version = "0.0.1"
+description = "Monitor and kill MongoDB operations"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Vicenç Juan Tomàs Monserrat", email = "vicenc.monserrat@close.com" }]
+dependencies = [
+    "pymongo>=4.10.1",
+    "textual>=0.86.1",
+]
+keywords = [
+  "mongo", "operations", "manager"
+]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Database :: Front-Ends"
+]
