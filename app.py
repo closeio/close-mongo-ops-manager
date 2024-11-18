@@ -561,7 +561,6 @@ class MongoOpsManager(App):
         Binding("k", "kill_selected", "Kill Selected"),
         Binding("p", "toggle_refresh", "Pause/Resume"),
         Binding("u", "deselect_all", "Deselect All"),
-        Binding("t", "toggle_dark", "Toggle dark/light mode"),
         Binding("s", "sort_by_running_time", "Sort By Running Time"),
     ]
 
@@ -576,6 +575,7 @@ class MongoOpsManager(App):
         self.connection_string = ""
         self.refresh_interval = 15.0
         self.mongo: MongoDBConnection
+        self.theme: str = "textual-dark" # 0.86.0+ uses themes instead of dark/light mode. So only dark for now.
         try:
             self.load_config_from_args(args)
         except Exception as e:
@@ -652,10 +652,6 @@ class MongoOpsManager(App):
         # self.start_auto_refresh()
         self.set_focus(self.table)
         self.update_refresh_status()
-
-    def action_toggle_dark(self) -> None:
-        """Toggle dark mode."""
-        self.dark = not self.dark
 
     def action_deselect_all(self) -> None:
         """Deselect all selected operations."""
