@@ -39,3 +39,5 @@ Launch the app with the required arguments
 ```shell
 uv run app.py --help
 ```
+
+![App screenshot](img/close-mongo-ops-manager.png "Close Mongo Ops Manager")
