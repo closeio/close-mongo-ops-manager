@@ -1,5 +1,5 @@
 # close-mongo-ops-manager
-Monitor and kill MongoDB operations
+Monitor and kill MongoDB operations (Be advised that this is in a pre-alpha state. Use at your own risk.)
 
 # Requirements
 
