@@ -494,7 +494,7 @@ class MongoOpsManager(App):
 
     TITLE = "Close Mongo Operations Manager"
 
-    # ENABLE_COMMAND_PALETTE = False
+    ENABLE_COMMAND_PALETTE = False
 
     CSS = """
     #refresh-status {
