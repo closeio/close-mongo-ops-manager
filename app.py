@@ -344,7 +344,7 @@ class MongoDBConnection:
             # Check if the operation was killed successfully
             if result.get("ok") == 1:
                 # Verify the operation was killed by checking if it still exists
-                time.sleep(0.5)  # Wait briefly for kill to take effect
+                time.sleep(2.0)  # Wait briefly for kill to take effect
 
                 # Check if operation still exists
                 current_ops = await self.get_current_ops()
