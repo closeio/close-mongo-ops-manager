@@ -190,6 +190,14 @@ class MongoDBConnection:
                                 }
                             }
                         )
+                    if filters.get("effective_users"):
+                        match_stage["$and"].append({
+                            "effectiveUsers": {
+                                "$elemMatch": {
+                                    "user": {"$regex": filters["effective_users"], "$options": "i"},
+                                }
+                            }
+                        })
                     if (
                         filters.get("running_time")
                         and filters["running_time"].isdigit()
@@ -244,6 +252,14 @@ class MongoDBConnection:
                                 re.search(
                                     filters["description"],
                                     op.get("desc", ""),
+                                    re.IGNORECASE,
+                                )
+                            )
+                        if filters.get("effective_users"):
+                            matches_all &= bool(
+                                re.search(
+                                    filters["effective_users"],
+                                    op.get("effective_users", ""),
                                     re.IGNORECASE,
                                 )
                             )
@@ -438,6 +454,7 @@ class OperationsTable(DataTable):
             "running_time": "",
             "client": "",
             "description": "",
+            "effective_users": "",
         }
         self.sort_running_time_asc = True
 
@@ -516,6 +533,11 @@ class FiltersContainer(Container):
             Input(
                 placeholder="Description...",
                 id="filter-description",
+                classes="filter-input",
+            ),
+            Input(
+                placeholder="Effective Users...",
+                id="filter-effective-users",
                 classes="filter-input",
             ),
             Button(
@@ -740,17 +762,17 @@ class MongoOpsManager(App):
         status = "enabled" if self.auto_refresh_enabled else "paused"
         self.notify(f"Auto-refresh {status}")
 
-    def stop_refresh(self) -> None:
-        """Stop auto-refresh."""
-        self.auto_refresh_enabled = False
-        self.update_refresh_status()
-        self.notify("Auto-refresh stopped")
+    # def stop_refresh(self) -> None:
+    #     """Stop auto-refresh."""
+    #     self.auto_refresh_enabled = False
+    #     self.update_refresh_status()
+    #     self.notify("Auto-refresh stopped")
 
-    def start_refresh(self) -> None:
-        """Start auto-refresh."""
-        self.auto_refresh_enabled = True
-        self.update_refresh_status()
-        self.notify("Auto-refresh started")
+    # def start_refresh(self) -> None:
+    #     """Start auto-refresh."""
+    #     self.auto_refresh_enabled = True
+    #     self.update_refresh_status()
+    #     self.notify("Auto-refresh started")
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle changes to filter inputs."""
@@ -833,9 +855,6 @@ class MongoOpsManager(App):
     def action_sort_by_running_time(self) -> None:
         """Sort operations by running time."""
         try:
-            # Stop refreshing while sorting
-            # self.stop_refresh()
-
             rows_data = []
 
             # Clear selections before sorting
