@@ -73,9 +73,11 @@ class MongoDBConnection:
     """Handles MongoDB connection and operations."""
 
     def __init__(self) -> None:
-        self.client = None
+        self.read_client = None
+        self.write_client = None
         self.connection_string = ""
-        self.admin_db: AsyncDatabase
+        self.read_admin_db: AsyncDatabase
+        self.write_admin_db: AsyncDatabase
 
     @classmethod
     async def create(cls, connection_string: str) -> "MongoDBConnection":
@@ -83,16 +85,28 @@ class MongoDBConnection:
         instance = cls()
         instance.connection_string = connection_string
         try:
-            instance.client = AsyncMongoClient(
-                connection_string,
+            # Create read client with secondary preference
+            read_conn_string = f"{connection_string}?readPreference=secondary"
+            instance.read_client = AsyncMongoClient(
+                read_conn_string,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+            )
+
+            # Create write client that targets primary
+            write_conn_string = f"{connection_string}?readPreference=primary"
+            instance.write_client = AsyncMongoClient(
+                write_conn_string,
                 serverSelectionTimeoutMS=5000,
                 connectTimeoutMS=5000,
             )
 
             # Verify connections
-            instance.admin_db = instance.client.admin
+            instance.read_admin_db = instance.read_client.admin
+            instance.write_admin_db = instance.write_client.admin
 
-            await instance.admin_db.command("ping")
+            await instance.read_admin_db.command("ping")
+            await instance.write_admin_db.command("ping")
 
             # Log connection success
             parsed_uri = pymongo.uri_parser.parse_uri(connection_string)
@@ -124,7 +138,7 @@ class MongoDBConnection:
     async def is_mongos(self) -> bool:
         """Check if connected to a mongos instance using read client."""
         try:
-            hello = await self.admin_db.command("hello")
+            hello = await self.read_admin_db.command("hello")
             return "isdbgrid" in hello.get("msg", "")
         except PyMongoError:
             return False
@@ -211,11 +225,11 @@ class MongoDBConnection:
                     if match_stage["$and"]:
                         pipeline.append({"$match": match_stage})
 
-                cursor = await self.admin_db.aggregate(pipeline)
+                cursor = await self.read_admin_db.aggregate(pipeline)
                 inprog = await cursor.to_list()
             else:
                 # For mongod, use currentOp command directly
-                result = await self.admin_db.command("currentOp", current_op_args)
+                result = await self.read_admin_db.command("currentOp", current_op_args)
                 inprog = result.get("inprog", [])
 
                 # Apply filters manually for mongod
@@ -325,7 +339,7 @@ class MongoDBConnection:
 
             # Use the admin database to run killOp command
             use_opid = numeric_opid if numeric_opid is not None else opid
-            result = await self.admin_db.command("killOp", op=use_opid)
+            result = await self.write_admin_db.command("killOp", op=use_opid)
 
             # Check if the operation was killed successfully
             if result.get("ok") == 1:
