@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import asyncio
 from urllib.parse import quote_plus
+from collections.abc import Mapping
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal
@@ -18,6 +19,7 @@ from rich.text import Text
 
 from pymongo import AsyncMongoClient
 from pymongo.errors import PyMongoError
+from pymongo.asynchronous.database import AsyncDatabase
 import pymongo.uri_parser
 import logging
 import sys
@@ -58,6 +60,7 @@ class MongoOperation:
     microsecs_running: int
     active: bool
     command: dict[str, Any]
+    effective_users: list[dict[str, str]]
 
 
 class MongoConnectionError(Exception):
@@ -72,44 +75,34 @@ class MongoDBConnection:
     def __init__(self) -> None:
         self.client = None
         self.connection_string = ""
-        self.show_internal_ops: bool = False
+        self.admin_db: AsyncDatabase
 
     @classmethod
-    async def create(
-        cls, connection_string: str, args: argparse.Namespace
-    ) -> "MongoDBConnection":
+    async def create(cls, connection_string: str) -> "MongoDBConnection":
         """Create a MongoDBConnection instance."""
         instance = cls()
         instance.connection_string = connection_string
-        instance.client = None
         try:
-            instance.client = await instance._initialize_client(args)
-        except Exception as e:
-            logger.error(f"Error initializing MongoDB connection: {e}")
-            raise MongoConnectionError(f"Failed to connect to MongoDB: {e}")
-        return instance
-
-    async def _initialize_client(self, args) -> AsyncMongoClient:
-        try:
-            self.client = AsyncMongoClient(
-                self.connection_string,
+            instance.client = AsyncMongoClient(
+                connection_string,
                 serverSelectionTimeoutMS=5000,
                 connectTimeoutMS=5000,
             )
-            self.admin_db = self.client.admin
-            await self.admin_db.command("ping")
 
-            self.show_internal_ops = args.show_internal_ops
+            # Verify connections
+            instance.admin_db = instance.client.admin
 
-            # Log connection success with details (excluding credentials)
-            parsed_uri = pymongo.uri_parser.parse_uri(self.connection_string)
+            await instance.admin_db.command("ping")
+
+            # Log connection success
+            parsed_uri = pymongo.uri_parser.parse_uri(connection_string)
             auth_str = (
                 "authenticated" if parsed_uri.get("username") else "unauthenticated"
             )
             logger.info(
                 f"Successfully connected to MongoDB ({auth_str}) at {parsed_uri['nodelist'][0][0]}:{parsed_uri['nodelist'][0][1]}"
             )
-            return self.client
+            return instance
 
         except PyMongoError as e:
             error_msg = str(e)
@@ -129,7 +122,7 @@ class MongoDBConnection:
                 raise MongoConnectionError(f"Failed to connect to MongoDB: {error_msg}")
 
     async def is_mongos(self) -> bool:
-        """Check if connected to a mongos instance."""
+        """Check if connected to a mongos instance using read client."""
         try:
             hello = await self.admin_db.command("hello")
             return "isdbgrid" in hello.get("msg", "")
@@ -155,46 +148,59 @@ class MongoDBConnection:
 
                 # Add filters if present
                 if filters:
-                    match_stage = {}
+                    match_stage: Mapping[str, Any] = {"$and": []}
+
                     if filters.get("opid"):
-                        match_stage["opid"] = {
-                            "$regex": filters["opid"],
-                            "$options": "i",
-                        }
+                        match_stage["$and"].append(
+                            {"opid": {"$regex": filters["opid"], "$options": "i"}}
+                        )
                     if filters.get("operation"):
-                        match_stage["op"] = {
-                            "$regex": filters["operation"],
-                            "$options": "i",
-                        }
+                        match_stage["$and"].append(
+                            {"op": {"$regex": filters["operation"], "$options": "i"}}
+                        )
                     if filters.get("namespace"):
-                        match_stage["ns"] = {
-                            "$regex": filters["namespace"],
-                            "$options": "i",
-                        }
+                        match_stage["$and"].append(
+                            {"ns": {"$regex": filters["namespace"], "$options": "i"}}
+                        )
                     if filters.get("client"):
-                        match_stage["$or"] = [
-                            {"client": {"$regex": filters["client"], "$options": "i"}},
+                        match_stage["$and"].append(
                             {
-                                "client_s": {
-                                    "$regex": filters["client"],
+                                "$or": [
+                                    {
+                                        "client": {
+                                            "$regex": filters["client"],
+                                            "$options": "i",
+                                        }
+                                    },
+                                    {
+                                        "client_s": {
+                                            "$regex": filters["client"],
+                                            "$options": "i",
+                                        }
+                                    },
+                                ]
+                            }
+                        )
+                    if filters.get("description"):
+                        match_stage["$and"].append(
+                            {
+                                "desc": {
+                                    "$regex": filters["description"],
                                     "$options": "i",
                                 }
-                            },
-                        ]
-                    if filters.get("description"):
-                        match_stage["desc"] = {
-                            "$regex": filters["description"],
-                            "$options": "i",
-                        }
+                            }
+                        )
                     if (
                         filters.get("running_time")
                         and filters["running_time"].isdigit()
                     ):
-                        match_stage["secs_running"] = {
-                            "$gte": int(filters["running_time"])
-                        }
+                        match_stage["$and"].append(
+                            {"secs_running": {"$gte": int(filters["running_time"])}}
+                        )
 
-                    if match_stage:
+                    match_stage["$and"].append({"active": True})
+
+                    if match_stage["$and"]:
                         pipeline.append({"$match": match_stage})
 
                 cursor = await self.admin_db.aggregate(pipeline)
@@ -208,25 +214,41 @@ class MongoDBConnection:
                 if filters:
                     filtered_inprog = []
                     for op in inprog:
-                        matches = True
-                        if filters.get("opid") and not re.search(
-                            filters["opid"], str(op.get("opid", "")), re.IGNORECASE
-                        ):
-                            matches = False
-                        if filters.get("operation") and not re.search(
-                            filters["operation"], op.get("op", ""), re.IGNORECASE
-                        ):
-                            matches = False
-                        if filters.get("namespace") and not re.search(
-                            filters["namespace"], op.get("ns", ""), re.IGNORECASE
-                        ):
-                            matches = False
-                        if filters.get("description") and not re.search(
-                            filters["description"], op.get("desc", ""), re.IGNORECASE
-                        ):
-                            matches = False
+                        matches_all = True
+                        if filters.get("opid"):
+                            matches_all &= bool(
+                                re.search(
+                                    filters["opid"],
+                                    str(op.get("opid", "")),
+                                    re.IGNORECASE,
+                                )
+                            )
+                        if filters.get("operation"):
+                            matches_all &= bool(
+                                re.search(
+                                    filters["operation"],
+                                    op.get("op", ""),
+                                    re.IGNORECASE,
+                                )
+                            )
+                        if filters.get("namespace"):
+                            matches_all &= bool(
+                                re.search(
+                                    filters["namespace"],
+                                    op.get("ns", ""),
+                                    re.IGNORECASE,
+                                )
+                            )
+                        if filters.get("description"):
+                            matches_all &= bool(
+                                re.search(
+                                    filters["description"],
+                                    op.get("desc", ""),
+                                    re.IGNORECASE,
+                                )
+                            )
                         if filters.get("client"):
-                            client_match = any(
+                            matches_all &= any(
                                 re.search(
                                     filters["client"], str(client_value), re.IGNORECASE
                                 )
@@ -235,54 +257,23 @@ class MongoDBConnection:
                                     op.get("client_s", ""),
                                 ]
                             )
-                            if not client_match:
-                                matches = False
                         if (
                             filters.get("running_time")
                             and filters["running_time"].isdigit()
                         ):
                             secs_running = op.get("secs_running", 0)
-                            if not isinstance(
-                                secs_running, int | float
-                            ) or secs_running < int(filters["running_time"]):
-                                matches = False
+                            matches_all &= isinstance(
+                                secs_running, (int, float)
+                            ) and secs_running >= int(filters["running_time"])
 
-                        if matches:
+                        if matches_all:
                             filtered_inprog.append(op)
+
                     inprog = filtered_inprog
 
             # Filter out system operations
             ops = []
             for op in inprog:
-                # Skip internal operations if not enabled
-                if not self.show_internal_ops:
-                    continue
-
-                # TODO: Make show_internal_ops optional
-                command = op.get("command", {})
-                # op_op = op.get("op", "")
-                # ns = op.get("ns", "")
-                # Skip system operations
-                # mongodb_version = self.get_mongodb_major_version()
-                if (
-                    # (
-                    #     mongodb_version >= 6 and command.get("hello") == 1
-                    # )  # MongoDB version >= 6.0
-                    # or (
-                    #     mongodb_version < 6 and command.get("isMaster") == 1
-                    # )  # MongoDB version < 6.0
-                    # or
-                    command.get("ping") is not None
-                    or command.get("serverStatus") is not None
-                    or command.get("currentOp") is not None
-                    or command.get("aggregate") == "$cmd.aggregate"
-                    or command.get("$currentOp") is not None
-                    # or command.get("$db") == "admin"
-                    # or op_op == "none"
-                    # or ns == "local.oplog.rs"
-                ):
-                    continue
-
                 ops.append(
                     MongoOperation(
                         opid=op.get("opid"),
@@ -295,7 +286,8 @@ class MongoDBConnection:
                         secs_running=op.get("secs_running", 0),
                         microsecs_running=op.get("microsecs_running", 0),
                         active=op.get("active", True),
-                        command=command,
+                        command=op.get("command", {}),
+                        effective_users=op.get("effectiveUsers", []),
                     )
                 )
             return ops
@@ -460,6 +452,7 @@ class OperationsTable(DataTable):
             "Active",
             "Client",
             "Description",
+            "Effective Users",
         )
         self.focus()  # Request focus when mounted
 
@@ -475,18 +468,67 @@ class FiltersContainer(Container):
     """Container for filter inputs."""
 
     BORDER_TITLE = "Filters"
-
     BORDER_SUBTITLE = "Filter operations by criteria"
+
+    CSS = """
+    FiltersContainer {
+        height: auto;
+        margin: 1;
+        padding: 1;
+        background: $surface;
+        border: solid $primary;
+    }
+
+    #filters-container {
+        height: auto;
+        width: 100%;
+        align: center middle;
+        padding: 1;
+    }
+
+    #filters-container > Input {
+        margin: 1 2;
+        width: 1fr;
+        border: tall $primary;
+        background: $surface;
+    }
+
+    #clear-filters {
+        margin: 1 2;
+        min-width: 35;
+    }
+    """
 
     def compose(self) -> ComposeResult:
         yield Horizontal(
-            Input(placeholder="OpId...", id="filter-opid"),
-            Input(placeholder="Operation...", id="filter-operation"),
-            Input(placeholder="Running Time (>=s)...", id="filter-running-time"),
-            Input(placeholder="Client...", id="filter-client"),
-            Input(placeholder="Description...", id="filter-description"),
+            Input(placeholder="OpId...", id="filter-opid", classes="filter-input"),
+            Input(
+                placeholder="Operation...",
+                id="filter-operation",
+                classes="filter-input",
+            ),
+            Input(
+                placeholder="Running Time (>=s)...",
+                id="filter-running-time",
+                classes="filter-input",
+            ),
+            Input(placeholder="Client...", id="filter-client", classes="filter-input"),
+            Input(
+                placeholder="Description...",
+                id="filter-description",
+                classes="filter-input",
+            ),
+            Button(
+                "Clear Filters", id="clear-filters", variant="primary"
+            ),  # TODO: Improve layout
             id="filters-container",
         )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "clear-filters":
+            for input_widget in self.query(".filter-input"):
+                if isinstance(input_widget, Input):
+                    input_widget.value = ""
 
 
 class MongoOpsManager(App):
@@ -573,9 +615,9 @@ class MongoOpsManager(App):
         self.last_refresh = datetime.now()
         self.namespace = args.namespace
         self.connection_string = ""
-        self.refresh_interval = 15.0
+        self.refresh_interval = 5.0
         self.mongo: MongoDBConnection
-        self.theme: str = "textual-dark" # 0.86.0+ uses themes instead of dark/light mode. So only dark for now.
+        self.theme: str = "textual-dark"  # 0.86.0+ uses themes instead of dark/light mode. So only dark for now.
         try:
             self.load_config_from_args(args)
         except Exception as e:
@@ -587,7 +629,7 @@ class MongoOpsManager(App):
         """Create a new instance of the application."""
         self = cls(args)
         try:
-            self.mongo = await MongoDBConnection.create(self.connection_string, args)
+            self.mongo = await MongoDBConnection.create(self.connection_string)
         except MongoConnectionError as e:
             logger.error(f"MongoDB connection error: {e}")
             self.display_error_and_exit(str(e))
@@ -763,17 +805,24 @@ class MongoOpsManager(App):
 
             # Add operations to the table
             for op in ops:
+                # Format effective users as comma-separated string
+                effective_users_str = (
+                    ", ".join(f"{user.get('user', '')}" for user in op.effective_users)
+                    if op.effective_users
+                    else "N/A"
+                )
+
                 running_time = f"{op.secs_running}s"
                 row = (
                     "☐",
                     str(op.opid),
                     op.type,
                     op.op,
-                    # op.ns,
                     running_time,
                     "✓" if op.active else "✗",
                     op.client or "N/A",
                     op.desc or "N/A",
+                    effective_users_str,
                 )
                 self.table.add_row(*row, key=str(op.opid))
 
@@ -860,6 +909,16 @@ class MongoOpsManager(App):
             logger.error(f"Error handling row selection: {e}")
             self.notify("Error selecting row", severity="error")
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button press events."""
+        if event.button.id == "clear-filters":
+            # Clear all filters in the table
+            for key in self.table.filters:
+                self.table.filters[key] = ""
+            # Refresh the operations with cleared filters
+            self.refresh_ops()
+            self.notify("Filters cleared")
+
     async def action_kill_selected(self) -> None:
         """Kill selected operations with confirmation."""
         if not self.selected_ops:
@@ -945,17 +1004,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--namespace", type=str, required=True, help="MongoDB namespace to monitor"
     )
-    parser.add_argument(
-        "--show-internal-ops",
-        action="store_true",
-        help="Show internal operations",
-    )
 
     # Application settings
     parser.add_argument(
         "--refresh-interval",
         type=float,
-        default=15.0,
+        default=5.0,
         help="Refresh interval in seconds (min: 0.5, max: 60)",
     )
 
