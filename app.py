@@ -634,12 +634,12 @@ class MongoOpsManager(App):
     """
 
     BINDINGS = [
-        Binding("q", "quit", "Quit"),
-        Binding("r", "refresh", "Refresh"),
-        Binding("k", "kill_selected", "Kill Selected"),
-        Binding("p", "toggle_refresh", "Pause/Resume"),
-        Binding("u", "deselect_all", "Deselect All"),
-        Binding("s", "sort_by_running_time", "Sort By Running Time"),
+        Binding("ctrl+q", "quit", "Quit"),
+        Binding("ctrl+r", "refresh", "Refresh"),
+        Binding("ctrl+k", "kill_selected", "Kill Selected"),
+        Binding("ctrl+p", "toggle_refresh", "Pause/Resume"),
+        Binding("ctrl+u", "deselect_all", "Deselect All"),
+        Binding("ctrl+s", "sort_by_running_time", "Sort By Running Time"),
     ]
 
     selected_ops: reactive[set] = reactive(set())
