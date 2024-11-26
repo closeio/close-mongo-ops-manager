@@ -293,7 +293,7 @@ class MongoDBConnection:
                         ):
                             secs_running = op.get("secs_running", 0)
                             matches_all &= isinstance(
-                                secs_running, (int, float)
+                                secs_running, (int | float)
                             ) and secs_running >= int(filters["running_time"])
 
                         if matches_all:

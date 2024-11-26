@@ -13,7 +13,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "pymongo", specifier = ">=4.10.1" },
-    { name = "textual", specifier = ">=0.86.2" },
+    { name = "textual", specifier = ">=0.87.1" },
 ]
 
 [[package]]
@@ -140,7 +140,7 @@ wheels = [
 
 [[package]]
 name = "textual"
-version = "0.86.2"
+version = "0.87.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "markdown-it-py", extra = ["linkify", "plugins"] },
@@ -148,9 +148,9 @@ dependencies = [
     { name = "rich" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c3/d2/2f08cbc8c9290c9aeca93840e63c5d208ca6e50a7cddef9fa9cafca7cd68/textual-0.86.2.tar.gz", hash = "sha256:43073f9eb52d0f38a5af2f124ba68b378f91d260df4b1c92f384a3b5cbbbcb70", size = 1498282 }
+sdist = { url = "https://files.pythonhosted.org/packages/61/6a/e643a0d32dc964f831172ff84d4d1b0e3c6675954e74f81c201713c58d69/textual-0.87.1.tar.gz", hash = "sha256:daf4e248ba3d890831ff2617099535eb835863a2e3609c8ce00af0f6d55ed123", size = 1515065 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/01/c3/d7f602e00e05acd0c966409884a26c66e9748e542a88960f09ff7af95f5c/textual-0.86.2-py3-none-any.whl", hash = "sha256:2c0744feda959554aff1f169341e6e1fba6e51cdc45fb0a878675307d5719ca6", size = 647190 },
+    { url = "https://files.pythonhosted.org/packages/b5/da/65056aefc671ddf858ea3ae8da8cd78fe547b3adfa90554bdd178c26f376/textual-0.87.1-py3-none-any.whl", hash = "sha256:026d1368cd10610a72a9d3de7a56692a17e7e8dffa0468147eb8e186ba0ff0c0", size = 654686 },
 ]
 
 [[package]]
