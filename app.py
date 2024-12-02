@@ -205,13 +205,18 @@ class MongoDBConnection:
                             }
                         )
                     if filters.get("effective_users"):
-                        match_stage["$and"].append({
-                            "effectiveUsers": {
-                                "$elemMatch": {
-                                    "user": {"$regex": filters["effective_users"], "$options": "i"},
+                        match_stage["$and"].append(
+                            {
+                                "effectiveUsers": {
+                                    "$elemMatch": {
+                                        "user": {
+                                            "$regex": filters["effective_users"],
+                                            "$options": "i",
+                                        },
+                                    }
                                 }
                             }
-                        })
+                        )
                     if (
                         filters.get("running_time")
                         and filters["running_time"].isdigit()
