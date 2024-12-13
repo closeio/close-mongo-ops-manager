@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import re
 from typing import Any
 from dataclasses import dataclass
@@ -490,7 +491,6 @@ class OperationsTable(DataTable):
             "Description",
             "Effective Users",
         )
-        self.focus()  # Request focus when mounted
 
     def add_row(self, *values, **kwargs):
         """Override add_row to ensure consistent key handling."""
@@ -624,11 +624,7 @@ class MongoOpsManager(App):
         text-style: bold;
     }
 
-    DataTable .selected-row:odd {
-        background: $accent;
-    }
-
-    DataTable .selected-row:even {
+    DataTable .selected-row {
         background: $accent;
     }
 
@@ -656,7 +652,7 @@ class MongoOpsManager(App):
         self.last_refresh = datetime.now()
         self.namespace = args.namespace
         self.connection_string = ""
-        self.refresh_interval = 5.0
+        self.refresh_interval = args.refresh_interval
         self.mongo: MongoDBConnection
         self.theme: str = "textual-dark"  # 0.86.0+ uses themes instead of dark/light mode. So only dark for now.
         try:
@@ -689,17 +685,23 @@ class MongoOpsManager(App):
     def load_config_from_args(self, args) -> None:
         """Load configuration from command line arguments."""
         try:
+            # Get credentials from environment variables if not provided via args
+            username = args.username or os.environ.get("MONGODB_USERNAME")
+            password = args.password or os.environ.get("MONGODB_PASSWORD")
+            host = args.host or os.environ.get("MONGODB_HOST", "localhost")
+            port = args.port or os.environ.get("MONGODB_PORT", "27017")
+
             # Build connection string based on authentication settings
-            if args.username and args.password:
+            if username and password:
                 # Use authenticated connection
-                username = quote_plus(args.username)
-                password = quote_plus(args.password)
+                username = quote_plus(username)
+                password = quote_plus(password)
                 self.connection_string = (
-                    f"mongodb://{username}:{password}@{args.host}:{args.port}/"
+                    f"mongodb://{username}:{password}@{host}:{port}/"
                 )
             else:
                 # Use unauthenticated connection
-                self.connection_string = f"mongodb://{args.host}:{args.port}/"
+                self.connection_string = f"mongodb://{host}:{port}/"
                 logger.info("Using unauthenticated connection")
 
             # Application settings
@@ -780,18 +782,6 @@ class MongoOpsManager(App):
         self.update_refresh_status()
         status = "enabled" if self.auto_refresh_enabled else "paused"
         self.notify(f"Auto-refresh {status}")
-
-    # def stop_refresh(self) -> None:
-    #     """Stop auto-refresh."""
-    #     self.auto_refresh_enabled = False
-    #     self.update_refresh_status()
-    #     self.notify("Auto-refresh stopped")
-
-    # def start_refresh(self) -> None:
-    #     """Start auto-refresh."""
-    #     self.auto_refresh_enabled = True
-    #     self.update_refresh_status()
-    #     self.notify("Auto-refresh started")
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle changes to filter inputs."""
@@ -1037,8 +1027,16 @@ def parse_args() -> argparse.Namespace:
     # MongoDB connection settings
     parser.add_argument("--host", default="localhost", type=str, help="MongoDB host")
     parser.add_argument("--port", default="27017", type=str, help="MongoDB port")
-    parser.add_argument("--username", type=str, help="MongoDB username")
-    parser.add_argument("--password", type=str, help="MongoDB password")
+    parser.add_argument(
+        "--username",
+        type=str,
+        help="MongoDB username (can also be set via MONGODB_USERNAME env var)",
+    )
+    parser.add_argument(
+        "--password",
+        type=str,
+        help="MongoDB password (can also be set via MONGODB_PASSWORD env var)",
+    )
     parser.add_argument(
         "--namespace", type=str, required=True, help="MongoDB namespace to monitor"
     )
