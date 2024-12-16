@@ -1,38 +1,36 @@
-#!/usr/bin/env python3
+from __future__ import annotations
+
+from dataclasses import dataclass
+import asyncio
+import logging
 import os
 import re
 from typing import Any
-from dataclasses import dataclass
-from datetime import datetime, timedelta
-import asyncio
-from urllib.parse import quote_plus
 from collections.abc import Mapping
+from urllib.parse import quote_plus
+import sys
 
-from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal
-from textual.widgets import DataTable, Footer, Button, Static, Input, Header
-from textual.binding import Binding
-from textual.reactive import reactive
 from textual import work
+from textual.app import App, ComposeResult
+from textual.containers import Container, Horizontal, VerticalScroll
+from textual.message import Message
+from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.widgets import Button, DataTable, Footer, Header, Input, Static
 from textual.coordinate import Coordinate
-from rich.text import Text
 
 from pymongo import AsyncMongoClient
-from pymongo.errors import PyMongoError
 from pymongo.asynchronous.database import AsyncDatabase
-import pymongo.uri_parser
-import logging
-import sys
-import time
-import argparse
+from pymongo.errors import PyMongoError
+from pymongo.uri_parser import parse_uri
 
+# Constants
 LOG_FILE = "mongo_ops_manager.log"
 
 
 # Set up logging
 def setup_logging() -> logging.Logger:
-    logger = logging.getLogger()
+    logger = logging.getLogger("mongo_ops_manager")
     logger.setLevel(logging.INFO)
 
     formatter = logging.Formatter("%(asctime)s (%(levelname)s): %(message)s")
@@ -40,351 +38,38 @@ def setup_logging() -> logging.Logger:
     fh = logging.FileHandler(LOG_FILE)
     fh.setFormatter(formatter)
     logger.addHandler(fh)
+
     return logger
 
 
 logger = setup_logging()
 
 
-@dataclass
-class MongoOperation:
-    """Represents a MongoDB operation."""
-
-    opid: int | str
-    type: str
-    host: str
-    desc: str
-    client: str | None
-    op: str
-    ns: str
-    secs_running: int
-    microsecs_running: int
-    active: bool
-    command: dict[str, Any]
-    effective_users: list[dict[str, str]]
-
-
-class MongoConnectionError(Exception):
-    """Custom exception for MongoDB connection errors."""
+# Custom exceptions
+class MongoOpsError(Exception):
+    """Base exception for Close MongoDB Operations Manager."""
 
     pass
 
 
-class MongoDBConnection:
-    """Handles MongoDB connection and operations."""
+class ConnectionError(MongoOpsError):
+    """Exception raised for connection-related errors."""
 
-    def __init__(self) -> None:
-        self.read_client = None
-        self.write_client = None
-        self.connection_string = ""
-        self.read_admin_db: AsyncDatabase
-        self.write_admin_db: AsyncDatabase
+    pass
 
-    @classmethod
-    async def create(cls, connection_string: str) -> "MongoDBConnection":
-        """Create a MongoDBConnection instance."""
-        instance = cls()
-        instance.connection_string = connection_string
-        try:
-            # Create read client with secondary preference
-            read_conn_string = f"{connection_string}?readPreference=secondary"
-            instance.read_client = AsyncMongoClient(
-                read_conn_string,
-                serverSelectionTimeoutMS=5000,
-                connectTimeoutMS=5000,
-            )
 
-            # Create write client that targets primary
-            write_conn_string = f"{connection_string}?readPreference=primary"
-            instance.write_client = AsyncMongoClient(
-                write_conn_string,
-                serverSelectionTimeoutMS=5000,
-                connectTimeoutMS=5000,
-            )
+class OperationError(MongoOpsError):
+    """Exception raised for operation-related errors."""
 
-            # Verify connections
-            instance.read_admin_db = instance.read_client.admin
-            instance.write_admin_db = instance.write_client.admin
+    pass
 
-            await instance.read_admin_db.command("ping")
-            await instance.write_admin_db.command("ping")
 
-            # Log connection success
-            parsed_uri = pymongo.uri_parser.parse_uri(connection_string)
-            auth_str = (
-                "authenticated" if parsed_uri.get("username") else "unauthenticated"
-            )
-            logger.info(
-                f"Successfully connected to MongoDB ({auth_str}) at {parsed_uri['nodelist'][0][0]}:{parsed_uri['nodelist'][0][1]}"
-            )
-            return instance
+# Message classes for better component communication
+@dataclass
+class FilterChanged(Message):
+    """Filter criteria changed."""
 
-        except PyMongoError as e:
-            error_msg = str(e)
-            if "Authentication failed" in error_msg:
-                raise MongoConnectionError(
-                    "Authentication failed. Please check your username and password."
-                )
-            elif "Connection refused" in error_msg:
-                raise MongoConnectionError(
-                    "Could not connect to MongoDB server. Please verify the host and port are correct and the server is running."
-                )
-            elif "timed out" in error_msg:
-                raise MongoConnectionError(
-                    "Connection timed out. Please check your network connection and MongoDB server status."
-                )
-            else:
-                raise MongoConnectionError(f"Failed to connect to MongoDB: {error_msg}")
-
-    async def is_mongos(self) -> bool:
-        """Check if connected to a mongos instance using read client."""
-        try:
-            hello = await self.read_admin_db.command("hello")
-            return "isdbgrid" in hello.get("msg", "")
-        except PyMongoError:
-            return False
-
-    async def get_current_ops(self, filters=None) -> list[MongoOperation]:
-        """Retrieve current operations based on deployment type and filters."""
-        try:
-            # Prepare base currentOp command
-            current_op_args = {
-                "allUsers": True,
-                "idleConnections": False,
-                "idleCursors": False,
-                "idleSessions": True,
-                "localOps": False,
-                "backtrace": False,
-            }
-
-            if self.is_mongos():
-                # For mongos, use aggregate with $currentOp
-                pipeline = [{"$currentOp": current_op_args}]
-
-                # Add filters if present
-                if filters:
-                    match_stage: Mapping[str, Any] = {"$and": []}
-
-                    if filters.get("opid"):
-                        match_stage["$and"].append(
-                            {"opid": {"$regex": filters["opid"], "$options": "i"}}
-                        )
-                    if filters.get("operation"):
-                        match_stage["$and"].append(
-                            {"op": {"$regex": filters["operation"], "$options": "i"}}
-                        )
-                    if filters.get("namespace"):
-                        match_stage["$and"].append(
-                            {"ns": {"$regex": filters["namespace"], "$options": "i"}}
-                        )
-                    if filters.get("client"):
-                        match_stage["$and"].append(
-                            {
-                                "$or": [
-                                    {
-                                        "client": {
-                                            "$regex": filters["client"],
-                                            "$options": "i",
-                                        }
-                                    },
-                                    {
-                                        "client_s": {
-                                            "$regex": filters["client"],
-                                            "$options": "i",
-                                        }
-                                    },
-                                ]
-                            }
-                        )
-                    if filters.get("description"):
-                        match_stage["$and"].append(
-                            {
-                                "desc": {
-                                    "$regex": filters["description"],
-                                    "$options": "i",
-                                }
-                            }
-                        )
-                    if filters.get("effective_users"):
-                        match_stage["$and"].append(
-                            {
-                                "effectiveUsers": {
-                                    "$elemMatch": {
-                                        "user": {
-                                            "$regex": filters["effective_users"],
-                                            "$options": "i",
-                                        },
-                                    }
-                                }
-                            }
-                        )
-                    if (
-                        filters.get("running_time")
-                        and filters["running_time"].isdigit()
-                    ):
-                        match_stage["$and"].append(
-                            {"secs_running": {"$gte": int(filters["running_time"])}}
-                        )
-
-                    match_stage["$and"].append({"active": True})
-
-                    if match_stage["$and"]:
-                        pipeline.append({"$match": match_stage})
-
-                cursor = await self.read_admin_db.aggregate(pipeline)
-                inprog = await cursor.to_list()
-            else:
-                # For mongod, use currentOp command directly
-                result = await self.read_admin_db.command("currentOp", current_op_args)
-                inprog = result.get("inprog", [])
-
-                # Apply filters manually for mongod
-                if filters:
-                    filtered_inprog = []
-                    for op in inprog:
-                        matches_all = True
-                        if filters.get("opid"):
-                            matches_all &= bool(
-                                re.search(
-                                    filters["opid"],
-                                    str(op.get("opid", "")),
-                                    re.IGNORECASE,
-                                )
-                            )
-                        if filters.get("operation"):
-                            matches_all &= bool(
-                                re.search(
-                                    filters["operation"],
-                                    op.get("op", ""),
-                                    re.IGNORECASE,
-                                )
-                            )
-                        if filters.get("namespace"):
-                            matches_all &= bool(
-                                re.search(
-                                    filters["namespace"],
-                                    op.get("ns", ""),
-                                    re.IGNORECASE,
-                                )
-                            )
-                        if filters.get("description"):
-                            matches_all &= bool(
-                                re.search(
-                                    filters["description"],
-                                    op.get("desc", ""),
-                                    re.IGNORECASE,
-                                )
-                            )
-                        if filters.get("effective_users"):
-                            matches_all &= bool(
-                                re.search(
-                                    filters["effective_users"],
-                                    op.get("effective_users", ""),
-                                    re.IGNORECASE,
-                                )
-                            )
-                        if filters.get("client"):
-                            matches_all &= any(
-                                re.search(
-                                    filters["client"], str(client_value), re.IGNORECASE
-                                )
-                                for client_value in [
-                                    op.get("client"),
-                                    op.get("client_s", ""),
-                                ]
-                            )
-                        if (
-                            filters.get("running_time")
-                            and filters["running_time"].isdigit()
-                        ):
-                            secs_running = op.get("secs_running", 0)
-                            matches_all &= isinstance(
-                                secs_running, (int | float)
-                            ) and secs_running >= int(filters["running_time"])
-
-                        if matches_all:
-                            filtered_inprog.append(op)
-
-                    inprog = filtered_inprog
-
-            # Filter out system operations
-            ops = []
-            for op in inprog:
-                ops.append(
-                    MongoOperation(
-                        opid=op.get("opid"),
-                        type=op.get("type", ""),
-                        host=op.get("host", ""),
-                        desc=op.get("desc", ""),
-                        client=op.get("client", op.get("client_s", "")),
-                        op=op.get("op", ""),
-                        ns=op.get("ns", ""),
-                        secs_running=op.get("secs_running", 0),
-                        microsecs_running=op.get("microsecs_running", 0),
-                        active=op.get("active", True),
-                        command=op.get("command", {}),
-                        effective_users=op.get("effectiveUsers", []),
-                    )
-                )
-            return ops
-
-        except PyMongoError as e:
-            logger.error(f"Error getting current operations: {e}")
-            raise
-
-    async def kill_operation(self, opid: int | str) -> bool:
-        """Kill a specific operation using killOp command."""
-        try:
-            # Convert string opid to numeric if possible (for non-sharded operations)
-            numeric_opid = None
-            if isinstance(opid, str) and ":" not in opid:
-                try:
-                    numeric_opid = int(opid)
-                except ValueError:
-                    pass
-
-            # Use the admin database to run killOp command
-            use_opid = numeric_opid if numeric_opid is not None else opid
-            result = await self.write_admin_db.command("killOp", op=use_opid)
-
-            # Check if the operation was killed successfully
-            if result.get("ok") == 1:
-                # Verify the operation was killed by checking if it still exists
-                time.sleep(2.0)  # Wait briefly for kill to take effect
-
-                # Check if operation still exists
-                current_ops = await self.get_current_ops()
-                for op in current_ops:
-                    if str(op.opid) == str(opid):
-                        logger.warning(
-                            f"Operation {opid} still exists after kill attempt"
-                        )
-                        return False
-
-                logger.info(f"Successfully killed operation {opid}")
-                return True
-            else:
-                logger.error(
-                    f"Failed to kill operation {opid}: {result.get('errmsg', "")}"
-                )
-
-            return False
-
-        except PyMongoError as e:
-            logger.error(f"Error killing MongoDB operation {opid}: {e}")
-            # Special handling for sharded cluster operations
-            if "TypeMismatch" in str(e) and isinstance(opid, str) and ":" in opid:
-                try:
-                    # For sharded operations, try to extract and kill the numeric part
-                    shard_id, numeric_part = opid.split(":")
-                    if numeric_part.isdigit():
-                        logger.info(
-                            f"Retrying kill with numeric part of sharded operation: {numeric_part}"
-                        )
-                        return await self.kill_operation(int(numeric_part))
-                except Exception as inner_e:
-                    logger.error(f"Error processing sharded operation ID: {inner_e}")
-            return False
+    filters: dict[str, str]
 
 
 class KillConfirmation(ModalScreen[bool]):
@@ -393,64 +78,63 @@ class KillConfirmation(ModalScreen[bool]):
     DEFAULT_CSS = """
     KillConfirmation {
         align: center middle;
+        width: auto;
+        height: auto;
+        padding: 1;
     }
 
-    #dialog-container {
-        grid-size: 2;
-        grid-gutter: 1 2;
-        grid-rows: 4;
-        padding: 1 2;
-        width: 60;
-        height: 11;
-        border: thick $error;
+    #dialog {
         background: $surface;
+        border: thick $error;
+        width: auto;
+        max-width: 50;
+        height: auto;
+        max-height: 10;
+        padding: 1;
     }
 
     #question {
-        column-span: 2;
-        height: 1fr;
-        width: 100%;
-        content-align: center middle;
-        text-style: bold;
+        padding: 1;
+        text-align: center;
+        width: auto;
     }
 
     #button-container {
-        column-span: 2;
-        height: 3;
+        width: 100%;
         align: center middle;
+        padding-top: 1;
     }
 
     Button {
-        width: 16;
-    }
-
-    #no {
-        margin-left: 2;
+        width: 8;
+        margin: 0 2;
     }
     """
 
-    def __init__(self, operations: list) -> None:
-        super().__init__()
+    def __init__(self, operations: list[str]) -> None:
         self.operations = operations
+        super().__init__()
 
     def compose(self) -> ComposeResult:
         count = len(self.operations)
         op_text = "operation" if count == 1 else "operations"
 
-        with Container(id="dialog-container"):
+        with Container(id="dialog"):
             yield Static(
                 f"Are you sure you want to kill {count} {op_text}?", id="question"
             )
             with Horizontal(id="button-container"):
                 yield Button("Yes", variant="error", id="yes")
-                yield Button("No", variant="primary", id="no")
+                yield Button("No", variant="primary", id="no", classes="button")
 
     def on_mount(self) -> None:
-        # Set focus to "No" button by default
         self.query_one("#no").focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        self.dismiss(event.button.id == "yes")
+        if event.button.id == "yes":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -459,27 +143,103 @@ class KillConfirmation(ModalScreen[bool]):
             self.dismiss(True)
 
 
-class OperationsTable(DataTable):
+class FilterBar(Container):
+    """Container for filter inputs."""
+
+    BORDER_TITLE = "Filters"
+
+    BORDER_SUBTITLE = "Filter operations by criteria"
+
+    DEFAULT_CSS = """
+    FilterBar {
+        height: auto;
+        layout: horizontal;
+        background: $surface;
+        border: solid $primary;
+        padding: 1;
+        margin: 0 1;
+        width: 100%;
+    }
+
+    .filter-input {
+        margin: 0 1;
+        width: 1fr;
+        border: solid $primary;
+    }
+
+    #clear-filters {
+        margin-left: 1;
+        width: auto;
+        background: $primary;
+        padding: 0 2;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Input(placeholder="OpId", id="filter-opid", classes="filter-input")
+        yield Input(
+            placeholder="Operation", id="filter-operation", classes="filter-input"
+        )
+        yield Input(
+            placeholder="Running Time ≥ sec",
+            id="filter-running-time",
+            classes="filter-input",
+        )
+        yield Input(placeholder="Client", id="filter-client", classes="filter-input")
+        yield Input(
+            placeholder="Description", id="filter-description", classes="filter-input"
+        )
+        yield Input(
+            placeholder="Effective Users",
+            id="filter-effective-users",
+            classes="filter-input",
+        )
+        yield Button("Clear", id="clear-filters")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "clear-filters":
+            for input in self.query(".filter-input"):
+                if isinstance(input, Input):
+                    input.value = ""
+            self.post_message(FilterChanged({}))
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        filters = {}
+        for input in self.query(".filter-input"):
+            if isinstance(input, Input) and input.value:
+                filter_key = input.id.replace("filter-", "").replace("-", "_")  # type: ignore
+                filters[filter_key] = input.value
+        self.post_message(FilterChanged(filters))
+
+
+class OperationsView(DataTable):
     """Table displaying MongoDB operations."""
+
+    BORDER_TITLE = "Operations"
+
+    DEFAULT_CSS = """
+    OperationsView {
+        height: 100%;
+        margin: 0 1;
+        border: solid $primary;
+        width: 100%;
+    }
+
+    DataTable {
+        height: auto;
+    }
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.cursor_type = "row"
         self.zebra_stripes = True
-        self.can_focus = True
-        self.filters = {
-            "opid": "",
-            "operation": "",
-            "namespace": "",
-            "running_time": "",
-            "client": "",
-            "description": "",
-            "effective_users": "",
-        }
+        self.filters: dict[str, str] = {}
         self.sort_running_time_asc = True
+        self.selected_ops: set[str] = set()
+        self.can_focus = True
 
     def on_mount(self) -> None:
-        """Set up the table columns when the widget is mounted."""
         self.add_columns(
             "Select",
             "OpId",
@@ -492,585 +252,839 @@ class OperationsTable(DataTable):
             "Effective Users",
         )
 
-    def add_row(self, *values, **kwargs):
-        """Override add_row to ensure consistent key handling."""
-        if "key" in kwargs:
-            # Ensure the key is always a string
-            kwargs["key"] = str(kwargs["key"])
-        return super().add_row(*values, **kwargs)
+    def toggle_selection(self, opid: str, row_idx: int) -> None:
+        coord = Coordinate(row_idx, 0)
+        if opid in self.selected_ops:
+            self.selected_ops.remove(opid)
+            self.update_cell_at(coord, "☐")
+        else:
+            self.selected_ops.add(opid)
+            self.update_cell_at(coord, "☒")
+
+    def clear_selections(self) -> None:
+        self.selected_ops.clear()
+        for idx, key in enumerate(self.rows.keys()):
+            coord = Coordinate(idx, 0)
+            self.update_cell_at(coord, "☐")
 
 
-class FiltersContainer(Container):
-    """Container for filter inputs."""
+class MongoDBManager:
+    """Handles MongoDB connection and operations."""
 
-    BORDER_TITLE = "Filters"
-    BORDER_SUBTITLE = "Filter operations by criteria"
+    def __init__(self) -> None:
+        self.read_client = None
+        self.write_client = None
+        self.read_admin_db: AsyncDatabase
+        self.write_admin_db: AsyncDatabase
+        self.is_sharded = False
+        self.namespace: str = ""
 
-    CSS = """
-    FiltersContainer {
-        height: auto;
-        margin: 1;
-        padding: 1;
-        background: $surface;
-        border: solid $primary;
-    }
+    @classmethod
+    async def connect(cls, connection_string: str, namespace: str) -> MongoDBManager:
+        self = cls()
+        try:
+            self.namespace = namespace
 
-    #filters-container {
-        height: auto;
+            # Create read client with secondary preference
+            read_conn_string = f"{connection_string}?readPreference=secondary"
+            self.read_client = AsyncMongoClient(
+                read_conn_string,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+            )
+
+            # Create write client that targets primary
+            write_conn_string = f"{connection_string}?readPreference=primary"
+            self.write_client = AsyncMongoClient(
+                write_conn_string,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+            )
+
+            # Set up admin databases for both connections
+            self.read_admin_db = self.read_client.admin
+            self.write_admin_db = self.write_client.admin
+
+            # Verify both connections
+            await self.read_admin_db.command("ping")
+            await self.write_admin_db.command("ping")
+
+            # Check if we're connected to a mongos
+            self.is_sharded = await self._check_is_mongos()
+
+            return self
+        except PyMongoError as e:
+            raise ConnectionError(f"Failed to connect to MongoDB: {e}")
+
+    async def _check_is_mongos(self) -> bool:
+        """Check if connected to a mongos instance."""
+        try:
+            hello = await self.read_admin_db.command("hello")
+            return "isdbgrid" in hello.get("msg", "")
+        except PyMongoError:
+            return False
+
+    async def get_operations(self, filters: dict[str, str] | None = None) -> list[dict]:
+        """Get current operations with appropriate handling for mongos/mongod."""
+        try:
+            # Base currentOp arguments
+            current_op_args = {
+                "allUsers": True,
+                "idleConnections": False,
+                "idleCursors": False,
+                "idleSessions": True,
+                "localOps": False,
+                "backtrace": False,
+            }
+
+            if await self._check_is_mongos():
+                # For mongos, use aggregate with $currentOp
+                pipeline = [{"$currentOp": current_op_args}]
+
+                if filters or self.namespace:
+                    match_stage: Mapping[str, Any] = {"$and": []}
+
+                    if self.namespace:
+                        match_stage["$and"].append(
+                            {"ns": {"$regex": f"^{self.namespace}", "$options": "i"}}
+                        )
+
+                    if filters:
+                        if filters.get("opid"):
+                            match_stage["$and"].append(
+                                {"opid": {"$regex": filters["opid"], "$options": "i"}}
+                            )
+                        if filters.get("operation"):
+                            match_stage["$and"].append(
+                                {
+                                    "op": {
+                                        "$regex": filters["operation"],
+                                        "$options": "i",
+                                    }
+                                }
+                            )
+                        if filters.get("client"):
+                            match_stage["$and"].append(
+                                {
+                                    "$or": [
+                                        {
+                                            "client": {
+                                                "$regex": filters["client"],
+                                                "$options": "i",
+                                            }
+                                        },
+                                        {
+                                            "client_s": {
+                                                "$regex": filters["client"],
+                                                "$options": "i",
+                                            }
+                                        },
+                                    ]
+                                }
+                            )
+                        if filters.get(
+                            "description"
+                        ):  # Changed from desc to description
+                            match_stage["$and"].append(
+                                {
+                                    "desc": {
+                                        "$regex": filters["description"],
+                                        "$options": "i",
+                                    }
+                                }
+                            )
+                        if filters.get("effective_users"):
+                            match_stage["$and"].append(
+                                {
+                                    "effectiveUsers": {
+                                        "$elemMatch": {
+                                            "user": {
+                                                "$regex": filters["effective_users"],
+                                                "$options": "i",
+                                            }
+                                        }
+                                    }
+                                }
+                            )
+                        if (
+                            filters.get("running_time")
+                            and filters["running_time"].isdigit()
+                        ):
+                            match_stage["$and"].append(
+                                {"secs_running": {"$gte": int(filters["running_time"])}}
+                            )
+
+                    match_stage["$and"].append({"active": True})
+
+                    if match_stage["$and"]:
+                        pipeline.append({"$match": match_stage})
+
+                cursor = await self.read_admin_db.aggregate(pipeline)
+                inprog = await cursor.to_list(None)  # Added length parameter
+            else:
+                # For mongod, use currentOp command directly
+                result = await self.read_admin_db.command("currentOp", current_op_args)
+                inprog = result.get("inprog", [])
+
+                # Apply filters manually for mongod
+                if filters or self.namespace:
+                    filtered_inprog = []
+                    for op in inprog:
+                        matches_all = True
+
+                        # Apply namespace filter if specified
+                        if self.namespace:
+                            matches_all &= bool(
+                                re.search(
+                                    f"^{self.namespace}",
+                                    op.get("ns", ""),
+                                    re.IGNORECASE,
+                                )
+                            )
+
+                        if filters:
+                            if filters.get("opid"):
+                                matches_all &= bool(
+                                    re.search(
+                                        filters["opid"],
+                                        str(op.get("opid", "")),
+                                        re.IGNORECASE,
+                                    )
+                                )
+                            if filters.get("operation"):
+                                matches_all &= bool(
+                                    re.search(
+                                        filters["operation"],
+                                        op.get("op", ""),
+                                        re.IGNORECASE,
+                                    )
+                                )
+                            if filters.get(
+                                "description"
+                            ):  # Changed from desc to description
+                                matches_all &= bool(
+                                    re.search(
+                                        filters["description"],
+                                        op.get("desc", ""),
+                                        re.IGNORECASE,
+                                    )
+                                )
+                            if filters.get("effective_users"):
+                                # Search through the effectiveUsers array
+                                effective_users = op.get("effectiveUsers", [])
+                                matches_all &= any(
+                                    bool(
+                                        re.search(
+                                            filters["effective_users"],
+                                            user.get("user", ""),
+                                            re.IGNORECASE,
+                                        )
+                                    )
+                                    for user in effective_users
+                                )
+                            if filters.get("client"):
+                                matches_all &= any(
+                                    re.search(
+                                        filters["client"],
+                                        str(client_value),
+                                        re.IGNORECASE,
+                                    )
+                                    for client_value in [
+                                        op.get("client"),
+                                        op.get("client_s", ""),
+                                    ]
+                                )
+                            if (
+                                filters.get("running_time")
+                                and filters["running_time"].isdigit()
+                            ):
+                                secs_running = op.get("secs_running", 0)
+                                matches_all &= isinstance(
+                                    secs_running, (int | float)
+                                ) and secs_running >= int(filters["running_time"])
+
+                        if matches_all:
+                            filtered_inprog.append(op)
+
+                    inprog = filtered_inprog
+
+            return inprog
+        except PyMongoError as e:
+            raise OperationError(f"Failed to get operations: {e}")
+
+    async def kill_operation(self, opid: str) -> bool:
+        """Kill operation with special handling for sharded clusters."""
+        try:
+            # Convert string opid to numeric if possible (for non-sharded operations)
+            numeric_opid = None
+            if isinstance(opid, str) and ":" not in opid:
+                try:
+                    numeric_opid = int(opid)
+                except ValueError:
+                    pass
+
+            # Use write_admin_db for kill operations to ensure we hit primary
+            use_opid = numeric_opid if numeric_opid is not None else opid
+            result = await self.write_admin_db.command("killOp", op=use_opid)
+
+            # Check if operation was killed successfully
+            if result.get("ok") == 1:
+                # Verify the operation was killed by checking if it still exists
+                await asyncio.sleep(1.0)  # Brief wait for kill to take effect
+
+                current_ops = await self.get_operations()
+                for op in current_ops:
+                    if str(op["opid"]) == str(opid):
+                        logger.warning(
+                            f"Operation {opid} still exists after kill attempt"
+                        )
+                        return False
+
+                logger.info(f"Successfully killed operation {opid}")
+                return True
+
+            return False
+
+        except PyMongoError as e:
+            # Special handling for sharded cluster operations
+            if "TypeMismatch" in str(e) and isinstance(opid, str) and ":" in opid:
+                try:
+                    # For sharded operations, try to extract and kill the numeric part
+                    shard_id, numeric_part = opid.split(":")
+                    if numeric_part.isdigit():
+                        logger.info(
+                            f"Retrying kill with numeric part of sharded operation: {numeric_part}"
+                        )
+                        return await self.kill_operation(numeric_part)
+                except Exception as inner_e:
+                    logger.error(f"Error processing sharded operation ID: {inner_e}")
+
+            raise OperationError(f"Failed to kill operation {opid}: {e}")
+
+
+class StatusBar(Static):
+    """Status bar widget showing current connection and refresh status."""
+
+    DEFAULT_CSS = """
+    StatusBar {
         width: 100%;
-        align: center middle;
-        padding: 1;
-    }
-
-    #filters-container > Input {
-        margin: 1 2;
-        width: 1fr;
-        border: tall $primary;
-        background: $surface;
-    }
-
-    #clear-filters {
-        margin: 1 2;
-        min-width: 35;
+        height: 1;
+        background: $boost;
+        color: $text;
+        content-align: left middle;
+        padding: 0 1;
     }
     """
 
-    def compose(self) -> ComposeResult:
-        yield Horizontal(
-            Input(placeholder="OpId...", id="filter-opid", classes="filter-input"),
-            Input(
-                placeholder="Operation...",
-                id="filter-operation",
-                classes="filter-input",
-            ),
-            Input(
-                placeholder="Running Time (>=s)...",
-                id="filter-running-time",
-                classes="filter-input",
-            ),
-            Input(placeholder="Client...", id="filter-client", classes="filter-input"),
-            Input(
-                placeholder="Description...",
-                id="filter-description",
-                classes="filter-input",
-            ),
-            Input(
-                placeholder="Effective Users...",
-                id="filter-effective-users",
-                classes="filter-input",
-            ),
-            Button(
-                "Clear Filters", id="clear-filters", variant="primary"
-            ),  # TODO: Improve layout
-            id="filters-container",
+    def __init__(self) -> None:
+        super().__init__()
+        self._connection_status = "Connecting..."
+        self._refresh_status = "Auto-refresh paused"
+        self._update_text()
+
+    def _update_text(self) -> None:
+        text = f"{self._connection_status} | {self._refresh_status}"
+        self.update(text)
+
+    def set_connection_status(self, connected: bool, details: str = "") -> None:
+        self._connection_status = (
+            f"Connected to {details}" if connected else "Disconnected"
         )
+        self._update_text()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "clear-filters":
-            for input_widget in self.query(".filter-input"):
-                if isinstance(input_widget, Input):
-                    input_widget.value = ""
+    def set_refresh_status(self, enabled: bool) -> None:
+        self._refresh_status = (
+            "Auto-refresh enabled" if enabled else "Auto-refresh paused"
+        )
+        self._update_text()
 
 
-class MongoOpsManager(App):
-    """Main application for managing MongoDB operations."""
+class HelpScreen(ModalScreen):
+    """Help screen showing keyboard shortcuts and usage information."""
 
-    TITLE = "Close Mongo Operations Manager"
-
-    ENABLE_COMMAND_PALETTE = False
-
-    CSS = """
-    #refresh-status {
-        background: $surface;
-        color: $error;
-        text-align: center;
-        padding: 1;
-        margin: 0 2;
-        text-style: bold;
-        border: heavy $warning;
-        display: none;
-    }
-
-    FiltersContainer {
-        height: auto;
-        margin: 1;
-        padding: 1;
-        background: $surface;
-        border: solid $primary;
-    }
-
-    #filters-container {
-        height: auto;
-        width: 100%;
+    DEFAULT_CSS = """
+    HelpScreen {
         align: center middle;
-        padding: 1;
     }
 
-    #filters-container > Input {
-        margin: 1 2;
-        width: 1fr;
-        border: tall $primary;
+    #help-container {
+        width: 70;
+        height: 80%;
+        border: thick $primary;
         background: $surface;
+        padding: 1 2;
+        overflow-y: scroll;
     }
 
-    DataTable {
-        height: 1fr;
-        margin: 1;
+    .help-content {
+        width: 100%;
+        height: auto;
     }
 
-    DataTable > .selected-row {
-        background: $accent;
+    .section-title {
+        text-style: bold;
         color: $text;
-        text-style: bold;
-    }
-
-    DataTable .selected-row {
-        background: $accent;
-    }
-
-    .paused {
-        color: $warning;
-        text-style: bold;
+        margin: 1 0;
     }
     """
 
     BINDINGS = [
-        Binding("ctrl+q", "quit", "Quit"),
-        Binding("ctrl+r", "refresh", "Refresh"),
-        Binding("ctrl+k", "kill_selected", "Kill Selected"),
-        Binding("ctrl+p", "toggle_refresh", "Pause/Resume"),
-        Binding("ctrl+u", "deselect_all", "Deselect All"),
-        Binding("ctrl+s", "sort_by_running_time", "Sort By Running Time"),
+        ("escape", "dismiss", "Close Help"),
     ]
 
-    selected_ops: reactive[set] = reactive(set())
-    auto_refresh_enabled: reactive[bool] = reactive(True)
+    def compose(self) -> ComposeResult:
+        with Container(id="help-container"):
+            yield Static(
+                "Close MongoDB Operations Manager Help", classes="section-title"
+            )
+            yield Static(
+                """
+Keyboard Shortcuts:
+------------------
+Ctrl+Q  : Quit application
+Ctrl+R  : Refresh operations list
+Ctrl+K  : Kill selected operations
+Ctrl+P  : Pause/Resume auto-refresh
+Ctrl+S  : Sort by running time
+Ctrl+H  : Show this help
+Ctrl+L  : View application logs
+Ctrl+U  : Deselect all operations
 
-    def __init__(self, args) -> None:
+Usage:
+------
+- Use arrow keys or mouse to navigate
+- Enter/Click to select operations
+- Filter operations using the input fields
+- Clear filters with the Clear button
+- Confirm kill operations when prompted
+            """,
+                classes="help-content",
+            )
+
+
+class LogScreen(ModalScreen):
+    """Screen for viewing application logs."""
+
+    DEFAULT_CSS = """
+    LogScreen {
+        align: center middle;
+    }
+
+    #log-container {
+        width: 80;
+        height: 80%;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #log-content {
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+    }
+    """
+
+    def __init__(self, log_file: str) -> None:
         super().__init__()
-        self._auto_refresh_task: asyncio.Task | None = None
-        self.last_refresh = datetime.now()
-        self.namespace = args.namespace
-        self.connection_string = ""
-        self.refresh_interval = args.refresh_interval
-        self.mongo: MongoDBConnection
-        self.theme: str = "textual-dark"  # 0.86.0+ uses themes instead of dark/light mode. So only dark for now.
-        try:
-            self.load_config_from_args(args)
-        except Exception as e:
-            logger.error(f"Initialization error: {e}")
-            self.display_error_and_exit(f"Failed to initialize application: {e}")
-
-    @classmethod
-    async def create(cls, args) -> "MongoOpsManager":
-        """Create a new instance of the application."""
-        self = cls(args)
-        try:
-            self.mongo = await MongoDBConnection.create(self.connection_string)
-        except MongoConnectionError as e:
-            logger.error(f"MongoDB connection error: {e}")
-            self.display_error_and_exit(str(e))
-        except Exception as e:
-            logger.error(f"Initialization error: {e}")
-            self.display_error_and_exit(f"Failed to initialize application: {e}")
-        return self
-
-    def display_error_and_exit(self, message: str) -> None:
-        """Display error message and exit the application."""
-        print(f"\nError: {message}")
-        print("Please check your configuration and try again.")
-        print("The application will now exit.")
-        exit(1)
-
-    def load_config_from_args(self, args) -> None:
-        """Load configuration from command line arguments."""
-        try:
-            # Get credentials from environment variables if not provided via args
-            username = args.username or os.environ.get("MONGODB_USERNAME")
-            password = args.password or os.environ.get("MONGODB_PASSWORD")
-            host = args.host or os.environ.get("MONGODB_HOST", "localhost")
-            port = args.port or os.environ.get("MONGODB_PORT", "27017")
-
-            # Build connection string based on authentication settings
-            if username and password:
-                # Use authenticated connection
-                username = quote_plus(username)
-                password = quote_plus(password)
-                self.connection_string = (
-                    f"mongodb://{username}:{password}@{host}:{port}/"
-                )
-            else:
-                # Use unauthenticated connection
-                self.connection_string = f"mongodb://{host}:{port}/"
-                logger.info("Using unauthenticated connection")
-
-            # Application settings
-            refresh_interval = args.refresh_interval
-            if refresh_interval < 0.5:
-                logger.warning(
-                    "Refresh interval too low, setting to minimum (0.5 seconds)"
-                )
-                refresh_interval = 0.5
-            elif refresh_interval > 60:
-                logger.warning(
-                    "Refresh interval too high, setting to maximum (60 seconds)"
-                )
-                refresh_interval = 60
-            self.refresh_interval = refresh_interval
-
-        except Exception as e:
-            raise Exception(f"Error processing arguments: {e}")
+        self.log_file = log_file
 
     def compose(self) -> ComposeResult:
-        """Create and compose the app layout."""
+        with Container(id="log-container"):
+            with VerticalScroll(id="log-content"):
+                try:
+                    with open(self.log_file) as f:
+                        content = f.read()
+                    yield Static(content)
+                except Exception as e:
+                    yield Static(f"Error reading log file: {e}")
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss()
+
+
+class MongoOpsManager(App):
+    """Main application class."""
+
+    ENABLE_COMMAND_PALETTE = False
+
+    TITLE = "Close MongoDB Operations Manager"
+    CSS = """
+    Screen {
+        align: center top;
+        padding: 0;
+    }
+
+    VerticalScroll {
+        width: 100%;
+        padding: 0;
+        margin: 0;
+    }
+
+    Container {
+        width: 100%;
+        padding: 0;
+        margin: 0;
+    }
+    """
+
+    BINDINGS = [
+        ("ctrl+r", "refresh", "Refresh"),
+        ("ctrl+k", "kill_selected", "Kill Selected"),
+        ("ctrl+p", "toggle_refresh", "Pause/Resume"),
+        ("ctrl+s", "sort_by_time", "Sort by Time"),
+        ("ctrl+q", "quit", "Quit"),
+        ("ctrl+h", "show_help", "Help"),
+        ("ctrl+l", "show_logs", "View Logs"),
+        ("ctrl+u", "deselect_all", "Deselect All"),
+    ]
+
+    auto_refresh: reactive[bool] = reactive(False)
+
+    def __init__(
+        self, connection_string: str, refresh_interval: float = 5.0, namespace: str = ""
+    ) -> None:
+        super().__init__()
+        self.connection_string = connection_string
+        self.refresh_interval = max(0.5, min(refresh_interval, 60.0))
+        self.mongodb: MongoDBManager | None = None
+        self._refresh_task: asyncio.Task | None = None
+        self.log_file = LOG_FILE
+        self._status_bar: StatusBar
+        self.namespace: str = namespace
+        # self.auto_refresh = False
+
+    def compose(self) -> ComposeResult:
+        """Create child widgets for the app."""
         yield Header()
-        yield Static("", id="refresh-status")
-        yield FiltersContainer()
-        yield Container(OperationsTable(), id="main-container")
+        with Container():
+            yield FilterBar()
+            with VerticalScroll():
+                yield OperationsView()
+        yield StatusBar()
         yield Footer()
 
     def on_mount(self) -> None:
-        """Initialize the app when mounted."""
-        self.table = self.query_one(OperationsTable)
-        self.status = self.query_one("#refresh-status")
-        self.refresh_ops()
-        # self.start_auto_refresh()
-        self.set_focus(self.table)
-        self.update_refresh_status()
+        self.operations_view = self.query_one(OperationsView)
+        self.operations_view.focus()
+        self._status_bar = self.query_one(StatusBar)
+        asyncio.create_task(self._setup())
+
+    def action_show_help(self) -> None:
+        """Show the help screen."""
+        self.push_screen(HelpScreen())
+
+    def action_show_logs(self) -> None:
+        """Show the log viewer screen."""
+        self.push_screen(LogScreen(self.log_file))
+
+    async def _setup(self) -> None:
+        """Initialize MongoDB connection and start operation monitoring."""
+        try:
+            self.mongodb = await MongoDBManager.connect(
+                self.connection_string, self.namespace
+            )
+            # Extract connection details for status bar
+            parsed_uri = parse_uri(self.connection_string)
+
+            # Safely extract host information with fallbacks
+            host_info = "unknown host"
+            try:
+                nodelist = parsed_uri.get("nodelist")
+                if nodelist and len(nodelist) > 0:
+                    host, port = nodelist[0]
+                    host_info = f"{host}:{port}"
+                else:
+                    # Fallback: try to extract from connection string directly
+                    cleaned_uri = self.connection_string.split("@")[-1].split("/")[0]
+                    host_info = cleaned_uri.split("?")[
+                        0
+                    ]  # Remove query parameters if present
+            except Exception as parse_error:
+                logger.warning(f"Failed to parse host details: {parse_error}")
+                # Use a generic connection success message
+                host_info = "MongoDB server"
+
+            self._status_bar.set_connection_status(True, host_info)
+
+            self.refresh_operations()
+            self._refresh_task = asyncio.create_task(self.auto_refreshing())
+        except Exception as e:
+            logger.error(f"Setup error: {e}", exc_info=True)
+            self._status_bar.set_connection_status(False)
+            self.notify(f"Failed to connect: {e}", severity="error")
+
+    async def auto_refreshing(self) -> None:
+        """Background task for auto-refreshing functionality."""
+        while True:
+            try:
+                if self.auto_refresh:
+                    self.refresh_operations()
+                await asyncio.sleep(self.refresh_interval)
+            except Exception as e:
+                logger.error(f"Auto-refresh error: {e}", exc_info=True)
+                await asyncio.sleep(self.refresh_interval)
+
+    @work(exclusive=True)
+    async def refresh_operations(self) -> None:
+        """Refresh the operations table with current data."""
+        if not self.mongodb:
+            return
+
+        try:
+            ops = await self.mongodb.get_operations(self.operations_view.filters)
+
+            # Remember selected operations
+            selected = self.operations_view.selected_ops.copy()
+
+            # Clear and rebuild the operations table
+            self.operations_view.clear()
+
+            # Sort operations by running time if needed
+            if hasattr(self.operations_view, "sort_running_time_asc"):
+                ops.sort(
+                    key=lambda x: float(str(x.get("secs_running", 0)).rstrip("s")),
+                    reverse=not self.operations_view.sort_running_time_asc,
+                )
+
+            for op in ops:
+                # Get client info
+                client_info = op.get("client_s") or op.get("client", "N/A")
+
+                # Get effective users
+                effective_users = op.get("effectiveUsers", [])
+                users_str = (
+                    ", ".join(u.get("user", "") for u in effective_users)
+                    if effective_users
+                    else "N/A"
+                )
+
+                row = (
+                    "☐",
+                    str(op["opid"]),
+                    op.get("type", ""),
+                    op.get("op", ""),
+                    f"{op.get('secs_running', 0)}s",
+                    "✓" if op.get("active", False) else "✗",
+                    client_info,
+                    op.get("desc", "N/A"),
+                    users_str,
+                )
+                self.operations_view.add_row(*row, key=str(op["opid"]))
+
+            # Restore selections
+            for idx, key in enumerate(self.operations_view.rows.keys()):
+                if str(key) in selected:
+                    coord = Coordinate(idx, 0)
+                    self.operations_view.update_cell_at(coord, "☒")
+                    self.operations_view.selected_ops.add(str(key))
+
+        except Exception as e:
+            self.notify(f"Failed to refresh: {e}", severity="error")
+
+    def action_refresh(self) -> None:
+        """Handle refresh action."""
+        self.refresh_operations()
+
+    def action_toggle_refresh(self) -> None:
+        """Toggle auto-refresh."""
+        self.auto_refresh = not self.auto_refresh
+        self._status_bar.set_refresh_status(self.auto_refresh)
+        status = "enabled" if self.auto_refresh else "paused"
+        self.notify(f"Auto-refresh {status}")
 
     def action_deselect_all(self) -> None:
         """Deselect all selected operations."""
-        if not self.selected_ops:
+        if not self.operations_view.selected_ops:
             return
 
         # Remember selected ops before clearing
-        count = len(self.selected_ops)
+        count = len(self.operations_view.selected_ops)
 
         # Find and update all selected rows
-        for row_key in self.table.rows.keys():
-            row_data = self.table.get_row(row_key)
-            if (
-                row_data and row_data[1] in self.selected_ops
-            ):  # Check OpId column (index 1)
+        for row_key in self.operations_view.rows.keys():
+            row_data = self.operations_view.get_row(row_key)
+            if row_data and row_data[1] in self.operations_view.selected_ops:
                 # Find the row index
-                for idx, key in enumerate(self.table.rows.keys()):
+                for idx, key in enumerate(self.operations_view.rows.keys()):
                     if key == row_key:
                         coord = Coordinate(idx, 0)
-                        self.table.update_cell_at(coord, "☐")
+                        self.operations_view.update_cell_at(coord, "☐")
                         break
 
         # Clear the selected operations set
-        self.selected_ops.clear()
+        self.operations_view.selected_ops.clear()
 
         # Show notification
         self.notify(f"Deselected {count} operations")
 
-    def update_refresh_status(self) -> None:
-        """Update the refresh status indicator."""
-        status_text = "AUTO-REFRESH PAUSED" if not self.auto_refresh_enabled else ""
-        self.status.styles.display = (
-            "block" if not self.auto_refresh_enabled else "none"
-        )
-        self.status.update(Text(status_text, style="bold red"))  # type: ignore
-        # Also update title to show status
-        status_suffix = " (PAUSED)" if not self.auto_refresh_enabled else ""
-        self.sub_title = status_suffix
-
-    def action_toggle_refresh(self) -> None:
-        """Toggle auto-refresh on/off."""
-        self.auto_refresh_enabled = not self.auto_refresh_enabled
-        self.update_refresh_status()
-        status = "enabled" if self.auto_refresh_enabled else "paused"
-        self.notify(f"Auto-refresh {status}")
-
-    def on_input_changed(self, event: Input.Changed) -> None:
-        """Handle changes to filter inputs."""
-        input_id = event.input.id
-        if input_id:
-            filter_key = input_id.replace("filter-", "").replace("-", "_")
-            self.table.filters[filter_key] = event.value
-            self.refresh_ops()  # Refresh with new filters
-
-    async def auto_refresh(self) -> None:
-        """Automatically refresh operations at configured interval."""
-        while True:
-            if self.auto_refresh_enabled:
-                current_time = datetime.now()
-                if current_time - self.last_refresh >= timedelta(
-                    seconds=self.refresh_interval
-                ):
-                    self.refresh_ops()
-                    self.last_refresh = current_time
-            await asyncio.sleep(0.1)
-
-    def start_auto_refresh(self) -> None:
-        """Start the auto-refresh task."""
-        if self._auto_refresh_task is None or self._auto_refresh_task.done():
-            self._auto_refresh_task = asyncio.create_task(self.auto_refresh())
-
-    def stop_auto_refresh(self) -> None:
-        """Stop the auto-refresh task."""
-        if self._auto_refresh_task and not self._auto_refresh_task.done():
-            self._auto_refresh_task.cancel()
-            self._auto_refresh_task = None
-
-    @work(exclusive=True)
-    async def refresh_ops(self) -> None:
-        """Refresh the operations table with filters."""
-        try:
-            # Get filters from inputs
-            filters = {}
-            for filter_id, value in self.table.filters.items():
-                if value.strip():  # Only add non-empty filters
-                    filters[filter_id] = value.strip()
-
-            # Add namespace filter from command line
-            filters["namespace"] = self.namespace
-
-            # Get current operations based on filters
-            ops = await self.mongo.get_current_ops(filters)
-
-            # Clear table and selected_ops set
-            self.table.clear()
-            self.selected_ops.clear()
-
-            # Add operations to the table
-            for op in ops:
-                # Format effective users as comma-separated string
-                effective_users_str = (
-                    ", ".join(f"{user.get('user', '')}" for user in op.effective_users)
-                    if op.effective_users
-                    else "N/A"
-                )
-
-                running_time = f"{op.secs_running}s"
-                row = (
-                    "☐",
-                    str(op.opid),
-                    op.type,
-                    op.op,
-                    running_time,
-                    "✓" if op.active else "✗",
-                    op.client or "N/A",
-                    op.desc or "N/A",
-                    effective_users_str,
-                )
-                self.table.add_row(*row, key=str(op.opid))
-
-        except Exception as e:
-            logger.error(f"Error refreshing operations: {e}")
-            self.notify("Error refreshing operations", severity="error")
-
-    def action_sort_by_running_time(self) -> None:
-        """Sort operations by running time."""
-        try:
-            rows_data = []
-
-            # Clear selections before sorting
-            self.selected_ops.clear()
-
-            # Collect data with running time values
-            for row_key in self.table.rows.keys():
-                row = self.table.get_row(row_key)
-                if row:
-                    # Extract seconds value, handling potential format issues
-                    # TODO: Do not use index-based access
-                    time_str = row[4].rstrip("s") if len(row) > 4 else "0"
-                    try:
-                        running_time = int(time_str)
-                        # Create new row with cleared selection state
-                        new_row = list(row)
-                        new_row[0] = "☐"  # Clear checkbox
-                        rows_data.append((running_time, new_row, str(row_key.value)))
-                    except ValueError:
-                        running_time = 0
-                        # If conversion fails, treat as 0
-                        new_row = list(row)
-                        new_row[0] = "☐"  # Clear checkbox
-                        rows_data.append((running_time, new_row, str(row_key.value)))
-
-            # Sort the data
-            reverse_sort = getattr(self.table, "sort_running_time_asc", True)
-            rows_data.sort(key=lambda x: x[0], reverse=reverse_sort)
-
-            # Update sort direction for next time
-            self.table.sort_running_time_asc = not reverse_sort
-
-            # Clear and rebuild table
-            self.table.clear()
-
-            # Rebuild the table with cleared selections
-            for _, row, opid in rows_data:
-                self.table.add_row(*row, key=opid)
-
-            # Show sorting notification
-            direction = "descending" if reverse_sort else "ascending"
-            self.notify(f"Sorted by running time ({direction})")
-
-        except Exception as e:
-            logger.error(f"Error sorting table: {e}")
-            self.notify("Error sorting operations", severity="error")
-
-    def action_refresh(self) -> None:
-        """Handle refresh action."""
-        self.refresh_ops()
-
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection."""
         try:
-            opid = event.row_key.value  # Get the actual value from the RowKey
-            row = self.table.get_row(event.row_key)
-            if row is None:
-                return
+            # Get the row key value directly
+            row_key = str(event.row_key.value)
+            coord = Coordinate(event.cursor_row, 0)  # Get checkbox cell coordinate
 
-            # Create coordinate for the checkbox cell (row, column)
-            coord = Coordinate(event.cursor_row, 0)
-
-            if opid in self.selected_ops:
-                self.selected_ops.remove(opid)
-                self.table.update_cell_at(coord, "☐")
+            if row_key in self.operations_view.selected_ops:
+                self.operations_view.selected_ops.remove(row_key)
+                self.operations_view.update_cell_at(coord, "☐")
             else:
-                self.selected_ops.add(opid)
-                self.table.update_cell_at(coord, "☒")
+                self.operations_view.selected_ops.add(row_key)
+                self.operations_view.update_cell_at(coord, "☒")
 
         except Exception as e:
-            logger.error(f"Error handling row selection: {e}")
+            logger.error(f"Error handling row selection: {e}", exc_info=True)
             self.notify("Error selecting row", severity="error")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button press events."""
-        if event.button.id == "clear-filters":
-            # Clear all filters in the table
-            for key in self.table.filters:
-                self.table.filters[key] = ""
-            # Refresh the operations with cleared filters
-            self.refresh_ops()
-            self.notify("Filters cleared")
 
     async def action_kill_selected(self) -> None:
         """Kill selected operations with confirmation."""
-        if not self.selected_ops:
+        if not self.operations_view.selected_ops:
             self.notify("No operations selected")
             return
 
-        async def check_kill_confirmation(confirmed: bool | None) -> None:
-            """Check if kill operation is confirmed."""
-            if not confirmed:
+        async def handle_confirmation(confirmed: bool | None) -> None:
+            if not confirmed or not self.mongodb:
                 return
 
-            killed = []
-            failed = []
+            success_count = 0
+            error_count = 0
 
-            try:
-                for opid_key in self.selected_ops:
-                    try:
-                        # Extract the actual operation ID from the RowKey's value
-                        if hasattr(opid_key, "value"):
-                            opid = opid_key.value
-                        else:
-                            opid = str(opid_key)  # Fallback if it's already a string
-
-                        # Kill operation using db.killOp()
-                        if await self.mongo.kill_operation(opid):
-                            killed.append(opid)
-                        else:
-                            failed.append(opid)
-                    except Exception as e:
-                        logger.error(f"Error killing operation {opid}: {e}")
-                        failed.append(opid)
-
-                # Show notifications based on results
-                if killed:
-                    killed_count = len(killed)
-                    op_text = "operation" if killed_count == 1 else "operations"
+            for opid in list(self.operations_view.selected_ops):
+                try:
+                    if await self.mongodb.kill_operation(opid):
+                        success_count += 1
+                        logger.info(f"Successfully killed operation {opid}")
+                    else:
+                        error_count += 1
+                        logger.error(
+                            f"Failed to kill operation {opid}: Operation not found"
+                        )
+                except Exception as e:
+                    error_count += 1
                     self.notify(
-                        f"Successfully killed {killed_count} {op_text}: {', '.join(str(x) for x in killed)}",
-                        severity="information",
-                        timeout=3,
+                        f"Failed to kill operation {opid}: {str(e)}", severity="error"
                     )
+                    logger.error(f"Failed to kill operation {opid}: {e}", exc_info=True)
 
-                if failed:
-                    failed_count = len(failed)
-                    op_text = "operation" if failed_count == 1 else "operations"
-                    self.notify(
-                        f"Failed to kill {failed_count} {op_text}: {', '.join(str(x) for x in failed)}",
-                        severity="error",
-                        timeout=5,
-                    )
+            # Clear selections after all operations are processed
+            self.operations_view.clear_selections()
 
-                # Clear selected operations
-                self.selected_ops.clear()
+            # Refresh the view after a brief delay to allow operations to be killed
+            await asyncio.sleep(1.0)
+            self.refresh_operations()
 
-                # Refresh operations
-                self.refresh_ops()
+            # Show summary
+            if success_count > 0:
+                self.notify(
+                    f"Successfully killed {success_count} operation(s)",
+                    severity="information",
+                )
+            if error_count > 0:
+                self.notify(
+                    f"Failed to kill {error_count} operation(s)", severity="error"
+                )
 
-            except Exception as e:
-                logger.error(f"Error in kill operation: {e}")
-                self.notify(f"Error during kill operation: {str(e)}", severity="error")
-
-            # Regardless of success/failure, refresh the list
-            finally:
-                self.refresh_ops()
-
-        self.push_screen(
-            KillConfirmation(list(self.selected_ops)), check_kill_confirmation
+        await self.push_screen(
+            KillConfirmation(list(self.operations_view.selected_ops)),
+            callback=handle_confirmation,
         )
 
+    async def on_filter_changed(self, event: FilterChanged) -> None:
+        """Handle filter changes."""
+        self.operations_view.filters = event.filters
+        self.refresh_operations()
 
-def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Close Mongo Operations Manager - Monitor and kill MongoDB operations",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-
-    # MongoDB connection settings
-    parser.add_argument("--host", default="localhost", type=str, help="MongoDB host")
-    parser.add_argument("--port", default="27017", type=str, help="MongoDB port")
-    parser.add_argument(
-        "--username",
-        type=str,
-        help="MongoDB username (can also be set via MONGODB_USERNAME env var)",
-    )
-    parser.add_argument(
-        "--password",
-        type=str,
-        help="MongoDB password (can also be set via MONGODB_PASSWORD env var)",
-    )
-    parser.add_argument(
-        "--namespace", type=str, required=True, help="MongoDB namespace to monitor"
-    )
-
-    # Application settings
-    parser.add_argument(
-        "--refresh-interval",
-        type=float,
-        default=5.0,
-        help="Refresh interval in seconds (min: 0.5, max: 60)",
-    )
-
-    return parser.parse_args()
-
-
-async def main() -> None:
-    """Main entry point for the application."""
-    try:
-        # Parse command line arguments
-        args = parse_args()
-
-        app = await MongoOpsManager.create(args)
-        await app.run_async()
-
-    except MongoConnectionError as e:
-        logger.error(f"MongoDB connection error: {e}")
-        print(f"\nError connecting to MongoDB: {e}")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        print(f"\nUnexpected error occurred: {e}")
-        print(f"Check {LOG_FILE} for more details")
-        sys.exit(1)
+    def action_sort_by_time(self) -> None:
+        """Sort operations by running time."""
+        self.operations_view.sort_running_time_asc = not getattr(
+            self.operations_view, "sort_running_time_asc", True
+        )
+        direction = (
+            "ascending" if self.operations_view.sort_running_time_asc else "descending"
+        )
+        self.notify(f"Sorted by running time ({direction})")
+        self.refresh_operations()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="Close MongoDB Operations Manager")
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("MONGODB_HOST", "localhost"),
+        type=str,
+        help="MongoDB host",
+    )
+    parser.add_argument(
+        "--port",
+        default=os.environ.get("MONGODB_PORT", "27017"),
+        type=str,
+        help="MongoDB port",
+    )
+    parser.add_argument(
+        "--username",
+        default=os.environ.get("MONGODB_USERNAME"),
+        type=str,
+        help="MongoDB username",
+    )
+    parser.add_argument(
+        "--password",
+        default=os.environ.get("MONGODB_PASSWORD"),
+        type=str,
+        help="MongoDB password",
+    )
+    parser.add_argument(
+        "--namespace", help="MongoDB namespace to monitor", required=True, type=str
+    )
+    parser.add_argument(
+        "--refresh-interval",
+        type=float,
+        default=float(os.environ.get("MONGODB_REFRESH_INTERVAL", "5.0")),
+        help="Refresh interval in seconds (min: 0.5, max: 60)",
+    )
+
+    args = parser.parse_args()
+
+    # Build connection string
+    username = args.username or os.environ.get("MONGODB_USERNAME")
+    password = args.password or os.environ.get("MONGODB_PASSWORD")
+    host = args.host or os.environ.get("MONGODB_HOST", "localhost")
+    port = args.port or os.environ.get("MONGODB_PORT", "27017")
+
+    try:
+        # Build connection string based on authentication settings
+        if username and password:
+            # Use authenticated connection
+            username = quote_plus(username)
+            password = quote_plus(password)
+            connection_string = f"mongodb://{username}:{password}@{host}:{port}/"
+        else:
+            # Use unauthenticated connection
+            connection_string = f"mongodb://{host}:{port}/"
+            logger.info("Using unauthenticated connection")
+
+        # Validate refresh interval
+        refresh_interval = args.refresh_interval
+        if refresh_interval < 0.5:
+            logger.warning("Refresh interval too low, setting to minimum (0.5 seconds)")
+            refresh_interval = 0.5
+        elif refresh_interval > 60:
+            logger.warning("Refresh interval too high, setting to maximum (60 seconds)")
+            refresh_interval = 60
+
+        # Start the application
+        app = MongoOpsManager(
+            connection_string=connection_string,
+            refresh_interval=refresh_interval,
+            namespace=args.namespace,
+        )
+        app.run()
+
+    except Exception as e:
+        logger.error(f"Startup error: {e}", exc_info=True)
+        print(f"\nError: {e}")
+        print(f"Please check {LOG_FILE} for details")
+        sys.exit(1)
