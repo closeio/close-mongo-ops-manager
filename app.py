@@ -35,7 +35,7 @@ def setup_logging() -> logging.Logger:
 
     formatter = logging.Formatter("%(asctime)s (%(levelname)s): %(message)s")
 
-    fh = logging.FileHandler(LOG_FILE)
+    fh = logging.FileHandler(LOG_FILE, mode="w")
     fh.setFormatter(formatter)
     logger.addHandler(fh)
 
@@ -169,9 +169,13 @@ class FilterBar(Container):
 
     #clear-filters {
         margin-left: 1;
+        margin-right: 1;
         width: auto;
         background: $primary;
-        padding: 0 2;
+    }
+
+    #clear-filters:hover {
+        background: $primary-darken-2;
     }
     """
 
@@ -251,15 +255,6 @@ class OperationsView(DataTable):
             "Description",
             "Effective Users",
         )
-
-    def toggle_selection(self, opid: str, row_idx: int) -> None:
-        coord = Coordinate(row_idx, 0)
-        if opid in self.selected_ops:
-            self.selected_ops.remove(opid)
-            self.update_cell_at(coord, "☐")
-        else:
-            self.selected_ops.add(opid)
-            self.update_cell_at(coord, "☒")
 
     def clear_selections(self) -> None:
         self.selected_ops.clear()
@@ -540,7 +535,6 @@ class MongoDBManager:
                         )
                         return False
 
-                logger.info(f"Successfully killed operation {opid}")
                 return True
 
             return False
@@ -835,10 +829,7 @@ class MongoOpsManager(App):
         try:
             ops = await self.mongodb.get_operations(self.operations_view.filters)
 
-            # Remember selected operations
-            selected = self.operations_view.selected_ops.copy()
-
-            # Clear and rebuild the operations table
+            # Clear the operations table
             self.operations_view.clear()
 
             # Sort operations by running time if needed
@@ -873,13 +864,6 @@ class MongoOpsManager(App):
                 )
                 self.operations_view.add_row(*row, key=str(op["opid"]))
 
-            # Restore selections
-            for idx, key in enumerate(self.operations_view.rows.keys()):
-                if str(key) in selected:
-                    coord = Coordinate(idx, 0)
-                    self.operations_view.update_cell_at(coord, "☒")
-                    self.operations_view.selected_ops.add(str(key))
-
         except Exception as e:
             self.notify(f"Failed to refresh: {e}", severity="error")
 
@@ -902,19 +886,10 @@ class MongoOpsManager(App):
         # Remember selected ops before clearing
         count = len(self.operations_view.selected_ops)
 
-        # Find and update all selected rows
-        for row_key in self.operations_view.rows.keys():
-            row_data = self.operations_view.get_row(row_key)
-            if row_data and row_data[1] in self.operations_view.selected_ops:
-                # Find the row index
-                for idx, key in enumerate(self.operations_view.rows.keys()):
-                    if key == row_key:
-                        coord = Coordinate(idx, 0)
-                        self.operations_view.update_cell_at(coord, "☐")
-                        break
-
         # Clear the selected operations set
         self.operations_view.selected_ops.clear()
+
+        self.refresh_operations()
 
         # Show notification
         self.notify(f"Deselected {count} operations")
