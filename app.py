@@ -894,6 +894,8 @@ class MongoOpsManager(App):
         # Show notification
         self.notify(f"Deselected {count} operations")
 
+    # FIXME: When refreshing the table after killing an operation
+    # the selected row is keep selected and the checkbox is not unchecked.
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection."""
         try:
