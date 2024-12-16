@@ -16,12 +16,12 @@ Use the right Python version
 uv python install 3.13
 ```
 
-List the python versions
+List the Python versions
 ```shell
 uv python list
 ```
 
-Pin the python 3.13 version
+Pin the Python 3.13 version
 ```shell
 uv python pin cpython-3.13.0-macos-aarch64-none
 ```
@@ -38,6 +38,8 @@ uv sync
 Launch the app with the required arguments
 ```shell
 uv run app.py --help
+
+uv run app.py --namespace ".*"
 ```
 
 ![App screenshot](img/close-mongo-ops-manager.png "Close Mongo Ops Manager")
