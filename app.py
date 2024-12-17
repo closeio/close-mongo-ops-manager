@@ -1062,7 +1062,7 @@ if __name__ == "__main__":
         help="MongoDB password",
     )
     parser.add_argument(
-        "--namespace", help="MongoDB namespace to monitor", required=True, type=str
+        "--namespace", help="MongoDB namespace to monitor", type=str, default=".*"
     )
     parser.add_argument(
         "--refresh-interval",

@@ -38,8 +38,6 @@ uv sync
 Launch the app with the required arguments
 ```shell
 uv run app.py --help
-
-uv run app.py --namespace ".*"
 ```
 
 ![App screenshot](img/close-mongo-ops-manager.png "Close Mongo Ops Manager")
