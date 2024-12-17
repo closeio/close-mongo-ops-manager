@@ -5,10 +5,11 @@ import asyncio
 import logging
 import os
 import re
+import argparse
+import sys
 from typing import Any
 from collections.abc import Mapping
 from urllib.parse import quote_plus
-import sys
 
 from textual import work
 from textual.binding import Binding
@@ -1032,10 +1033,7 @@ class MongoOpsManager(App):
         self.refresh_operations()
 
 
-if __name__ == "__main__":
-    import argparse
-    import sys
-
+def main() -> None:
     parser = argparse.ArgumentParser(description="Close MongoDB Operations Manager")
     parser.add_argument(
         "--host",
@@ -1119,3 +1117,7 @@ if __name__ == "__main__":
         print(f"\nError: {e}")
         print(f"Please check {LOG_FILE} for details")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
