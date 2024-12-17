@@ -11,6 +11,7 @@ from urllib.parse import quote_plus
 import sys
 
 from textual import work
+from textual.binding import Binding
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.message import Message
@@ -24,8 +25,13 @@ from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import PyMongoError
 from pymongo.uri_parser import parse_uri
 
+
 # Constants
 LOG_FILE = "mongo_ops_manager.log"
+MIN_REFRESH_INTERVAL = 1
+MAX_REFRESH_INTERVAL = 10
+DEFAULT_REFRESH_INTERVAL = 5
+STEP_REFRESH_INTERVAL = 1  # Interval change step
 
 
 # Set up logging
@@ -168,14 +174,13 @@ class FilterBar(Container):
     }
 
     #clear-filters {
-        margin-left: 1;
-        margin-right: 1;
+        margin: 0 1;
         width: auto;
         background: $primary;
-    }
 
-    #clear-filters:hover {
-        background: $primary-darken-2;
+        &:hover {
+            background: $primary-darken-2;
+        }
     }
     """
 
@@ -269,8 +274,7 @@ class MongoDBManager:
     def __init__(self) -> None:
         self.read_client = None
         self.write_client = None
-        self.read_admin_db: AsyncDatabase
-        self.write_admin_db: AsyncDatabase
+        self.admin_db: AsyncDatabase
         self.is_sharded = False
         self.namespace: str = ""
 
@@ -280,29 +284,19 @@ class MongoDBManager:
         try:
             self.namespace = namespace
 
-            # Create read client with secondary preference
-            read_conn_string = f"{connection_string}?readPreference=secondary"
+            # Create client
+            conn_string = f"{connection_string}?readPreference=secondaryPreferred"
             self.read_client = AsyncMongoClient(
-                read_conn_string,
-                serverSelectionTimeoutMS=5000,
-                connectTimeoutMS=5000,
-            )
-
-            # Create write client that targets primary
-            write_conn_string = f"{connection_string}?readPreference=primary"
-            self.write_client = AsyncMongoClient(
-                write_conn_string,
+                conn_string,
                 serverSelectionTimeoutMS=5000,
                 connectTimeoutMS=5000,
             )
 
             # Set up admin databases for both connections
-            self.read_admin_db = self.read_client.admin
-            self.write_admin_db = self.write_client.admin
+            self.admin_db = self.read_client.admin
 
             # Verify both connections
-            await self.read_admin_db.command("ping")
-            await self.write_admin_db.command("ping")
+            await self.admin_db.command("ping")
 
             # Check if we're connected to a mongos
             self.is_sharded = await self._check_is_mongos()
@@ -314,7 +308,7 @@ class MongoDBManager:
     async def _check_is_mongos(self) -> bool:
         """Check if connected to a mongos instance."""
         try:
-            hello = await self.read_admin_db.command("hello")
+            hello = await self.admin_db.command("hello")
             return "isdbgrid" in hello.get("msg", "")
         except PyMongoError:
             return False
@@ -414,11 +408,11 @@ class MongoDBManager:
                     if match_stage["$and"]:
                         pipeline.append({"$match": match_stage})
 
-                cursor = await self.read_admin_db.aggregate(pipeline)
-                inprog = await cursor.to_list(None)  # Added length parameter
+                cursor = await self.admin_db.aggregate(pipeline)
+                inprog = await cursor.to_list(None)
             else:
                 # For mongod, use currentOp command directly
-                result = await self.read_admin_db.command("currentOp", current_op_args)
+                result = await self.admin_db.command("currentOp", current_op_args)
                 inprog = result.get("inprog", [])
 
                 # Apply filters manually for mongod
@@ -518,9 +512,8 @@ class MongoDBManager:
                 except ValueError:
                     pass
 
-            # Use write_admin_db for kill operations to ensure we hit primary
             use_opid = numeric_opid if numeric_opid is not None else opid
-            result = await self.write_admin_db.command("killOp", op=use_opid)
+            result = await self.admin_db.command("killOp", op=use_opid)
 
             # Check if operation was killed successfully
             if result.get("ok") == 1:
@@ -574,10 +567,11 @@ class StatusBar(Static):
         super().__init__()
         self._connection_status = "Connecting..."
         self._refresh_status = "Auto-refresh paused"
+        self._refresh_interval = f"{DEFAULT_REFRESH_INTERVAL}s"
         self._update_text()
 
     def _update_text(self) -> None:
-        text = f"{self._connection_status} | {self._refresh_status}"
+        text = f"{self._connection_status} | {self._refresh_status} ({self._refresh_interval})"
         self.update(text)
 
     def set_connection_status(self, connected: bool, details: str = "") -> None:
@@ -592,6 +586,10 @@ class StatusBar(Static):
         )
         self._update_text()
 
+    def set_refresh_interval(self, interval: float) -> None:
+        self._refresh_interval = f"{interval:.1f}s"
+        self._update_text()
+
 
 class HelpScreen(ModalScreen):
     """Help screen showing keyboard shortcuts and usage information."""
@@ -602,28 +600,31 @@ class HelpScreen(ModalScreen):
     }
 
     #help-container {
-        width: 70;
-        height: 80%;
-        border: thick $primary;
+        width: 50%;
+        height: auto;
+        max-width: 50%;
+        max-height: 80%;
+        border: round $primary;
         background: $surface;
-        padding: 1 2;
-        overflow-y: scroll;
+        padding: 1;
+        overflow-y: auto;
     }
 
     .help-content {
-        width: 100%;
+        width: 50%;
         height: auto;
+        padding: 1;
     }
 
     .section-title {
         text-style: bold;
         color: $text;
-        margin: 1 0;
+        padding: 1;
     }
     """
 
     BINDINGS = [
-        ("escape", "dismiss", "Close Help"),
+        ("escape", "dismiss", "Help"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -643,6 +644,8 @@ Ctrl+S  : Sort by running time
 Ctrl+H  : Show this help
 Ctrl+L  : View application logs
 Ctrl+U  : Deselect all operations
+Ctrl++  : Increase refresh interval
+Ctrl+-  : Decrease refresh interval
 
 Usage:
 ------
@@ -665,17 +668,22 @@ class LogScreen(ModalScreen):
     }
 
     #log-container {
-        width: 80;
+        width: auto;
         height: 80%;
-        border: thick $primary;
+        max-width: 80%;
+        max-height: 80%;
+        border: round $primary;
         background: $surface;
         padding: 1 2;
+        overflow-y: auto;
     }
 
     #log-content {
-        width: 100%;
-        height: 100%;
-        overflow: auto;
+        width: auto;
+        max-width: 80%;
+        height: auto;
+        max-height: 80%;
+        padding: 1 2;
     }
     """
 
@@ -704,6 +712,9 @@ class MongoOpsManager(App):
     ENABLE_COMMAND_PALETTE = False
 
     TITLE = "Close MongoDB Operations Manager"
+
+    AUTO_FOCUS = "OperationsView"
+
     CSS = """
     Screen {
         align: center top;
@@ -724,30 +735,48 @@ class MongoOpsManager(App):
     """
 
     BINDINGS = [
-        ("ctrl+r", "refresh", "Refresh"),
-        ("ctrl+k", "kill_selected", "Kill Selected"),
-        ("ctrl+p", "toggle_refresh", "Pause/Resume"),
-        ("ctrl+s", "sort_by_time", "Sort by Time"),
-        ("ctrl+q", "quit", "Quit"),
-        ("ctrl+h", "show_help", "Help"),
-        ("ctrl+l", "show_logs", "View Logs"),
-        ("ctrl+u", "deselect_all", "Deselect All"),
+        Binding("ctrl+q", "quit", "Quit"),
+        Binding("ctrl+r", "refresh", "Refresh"),
+        Binding("ctrl+k", "kill_selected", "Kill Selected"),
+        Binding("ctrl+p", "toggle_refresh", "Pause/Resume"),
+        Binding("ctrl+s", "sort_by_time", "Sort by Time"),
+        Binding("ctrl+h", "show_help", "Help"),
+        Binding("ctrl+l", "show_logs", "View Logs"),
+        Binding("ctrl+u", "deselect_all", "Deselect All"),
+        Binding(
+            "ctrl+equals_sign",
+            "increase_refresh",
+            "Increase Refresh Interval",
+            key_display="^+",
+        ),
+        Binding(
+            "ctrl+minus",
+            "decrease_refresh",
+            "Decrease Refresh Interval",
+            key_display="^-",
+        ),
     ]
 
     auto_refresh: reactive[bool] = reactive(False)
+    refresh_interval: reactive[float] = reactive(DEFAULT_REFRESH_INTERVAL)
 
     def __init__(
-        self, connection_string: str, refresh_interval: float = 5.0, namespace: str = ""
+        self,
+        connection_string: str,
+        refresh_interval: float = DEFAULT_REFRESH_INTERVAL,
+        namespace: str = "",
     ) -> None:
         super().__init__()
         self.connection_string = connection_string
-        self.refresh_interval = max(0.5, min(refresh_interval, 60.0))
+        self.refresh_interval = max(
+            MIN_REFRESH_INTERVAL, min(refresh_interval, MAX_REFRESH_INTERVAL)
+        )
         self.mongodb: MongoDBManager | None = None
         self._refresh_task: asyncio.Task | None = None
         self.log_file = LOG_FILE
         self._status_bar: StatusBar
         self.namespace: str = namespace
-        # self.auto_refresh = False
+        self.auto_refresh = False
 
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
@@ -761,7 +790,6 @@ class MongoOpsManager(App):
 
     def on_mount(self) -> None:
         self.operations_view = self.query_one(OperationsView)
-        self.operations_view.focus()
         self._status_bar = self.query_one(StatusBar)
         asyncio.create_task(self._setup())
 
@@ -808,6 +836,26 @@ class MongoOpsManager(App):
             logger.error(f"Setup error: {e}", exc_info=True)
             self._status_bar.set_connection_status(False)
             self.notify(f"Failed to connect: {e}", severity="error")
+
+    def action_increase_refresh(self) -> None:
+        """Increase the refresh interval."""
+        new_interval = min(
+            MAX_REFRESH_INTERVAL, self.refresh_interval + STEP_REFRESH_INTERVAL
+        )
+        if new_interval != self.refresh_interval:
+            self.refresh_interval = new_interval
+            self.notify(f"Refresh interval increased to {self.refresh_interval:.1f}s")
+            self._status_bar.set_refresh_interval(self.refresh_interval)
+
+    def action_decrease_refresh(self) -> None:
+        """Decrease the refresh interval."""
+        new_interval = max(
+            MIN_REFRESH_INTERVAL, self.refresh_interval - STEP_REFRESH_INTERVAL
+        )
+        if new_interval != self.refresh_interval:
+            self.refresh_interval = new_interval
+            self.notify(f"Refresh interval decreased to {self.refresh_interval:.1f}s")
+            self._status_bar.set_refresh_interval(self.refresh_interval)
 
     async def auto_refreshing(self) -> None:
         """Background task for auto-refreshing functionality."""
@@ -1019,8 +1067,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--refresh-interval",
         type=float,
-        default=float(os.environ.get("MONGODB_REFRESH_INTERVAL", "5.0")),
-        help="Refresh interval in seconds (min: 0.5, max: 60)",
+        default=float(
+            os.environ.get("MONGODB_REFRESH_INTERVAL", str(DEFAULT_REFRESH_INTERVAL))
+        ),
+        help=f"Refresh interval in seconds (min: {MIN_REFRESH_INTERVAL}, max: {MAX_REFRESH_INTERVAL})",
     )
 
     args = parser.parse_args()
@@ -1045,12 +1095,16 @@ if __name__ == "__main__":
 
         # Validate refresh interval
         refresh_interval = args.refresh_interval
-        if refresh_interval < 0.5:
-            logger.warning("Refresh interval too low, setting to minimum (0.5 seconds)")
-            refresh_interval = 0.5
-        elif refresh_interval > 60:
-            logger.warning("Refresh interval too high, setting to maximum (60 seconds)")
-            refresh_interval = 60
+        if refresh_interval < MIN_REFRESH_INTERVAL:
+            logger.warning(
+                f"Refresh interval too low, setting to minimum ({MIN_REFRESH_INTERVAL} seconds)"
+            )
+            refresh_interval = MIN_REFRESH_INTERVAL
+        elif refresh_interval > MAX_REFRESH_INTERVAL:
+            logger.warning(
+                f"Refresh interval too high, setting to maximum ({MAX_REFRESH_INTERVAL} seconds)"
+            )
+            refresh_interval = MAX_REFRESH_INTERVAL
 
         # Start the application
         app = MongoOpsManager(
