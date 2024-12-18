@@ -588,7 +588,7 @@ class StatusBar(Static):
         self._update_text()
 
     def set_refresh_interval(self, interval: float) -> None:
-        self._refresh_interval = f"{interval:.1f}s"
+        self._refresh_interval = f"{interval}s"
         self._update_text()
 
 
