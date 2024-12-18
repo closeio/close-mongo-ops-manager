@@ -4,7 +4,6 @@ from dataclasses import dataclass
 import asyncio
 import logging
 import os
-import re
 import argparse
 import sys
 import time
@@ -290,7 +289,6 @@ class MongoDBManager:
         self.read_client = None
         self.write_client = None
         self.admin_db: AsyncDatabase
-        self.is_sharded = False
         self.namespace: str = ""
 
     @classmethod
@@ -313,9 +311,6 @@ class MongoDBManager:
             # Verify both connections
             await self.admin_db.command("ping")
 
-            # Check if we're connected to a mongos
-            self.is_sharded = await self._check_is_mongos()
-
             server_info = await self.admin_db.client.server_info()
             logger.info(
                 f"Connected to MongoDB {server_info.get('version', 'unknown version')}"
@@ -324,14 +319,6 @@ class MongoDBManager:
             return self
         except PyMongoError as e:
             raise ConnectionError(f"Failed to connect to MongoDB: {e}")
-
-    async def _check_is_mongos(self) -> bool:
-        """Check if connected to a mongos instance."""
-        try:
-            hello = await self.admin_db.command("hello")
-            return "isdbgrid" in hello.get("msg", "")
-        except PyMongoError:
-            return False
 
     async def get_operations(self, filters: dict[str, str] | None = None) -> list[dict]:
         """Get current operations with appropriate handling for mongos/mongod."""
@@ -346,176 +333,86 @@ class MongoDBManager:
                 "backtrace": False,
             }
 
-            if self.is_sharded:
-                # For mongos, use aggregate with $currentOp
-                pipeline = [{"$currentOp": current_op_args}]
+            pipeline = [{"$currentOp": current_op_args}]
 
-                if filters or self.namespace:
-                    match_stage: Mapping[str, Any] = {"$and": []}
+            if filters or self.namespace:
+                match_stage: Mapping[str, Any] = {"$and": []}
 
-                    if self.namespace:
+                if self.namespace:
+                    match_stage["$and"].append(
+                        {"ns": {"$regex": f"^{self.namespace}", "$options": "i"}}
+                    )
+
+                if filters:
+                    if filters.get("opid"):
                         match_stage["$and"].append(
-                            {"ns": {"$regex": f"^{self.namespace}", "$options": "i"}}
+                            {"opid": {"$regex": filters["opid"], "$options": "i"}}
                         )
-
-                    if filters:
-                        if filters.get("opid"):
-                            match_stage["$and"].append(
-                                {"opid": {"$regex": filters["opid"], "$options": "i"}}
-                            )
-                        if filters.get("operation"):
-                            match_stage["$and"].append(
-                                {
-                                    "op": {
-                                        "$regex": filters["operation"],
-                                        "$options": "i",
-                                    }
+                    if filters.get("operation"):
+                        match_stage["$and"].append(
+                            {
+                                "op": {
+                                    "$regex": filters["operation"],
+                                    "$options": "i",
                                 }
-                            )
-                        if filters.get("client"):
-                            match_stage["$and"].append(
-                                {
-                                    "$or": [
-                                        {
-                                            "client": {
-                                                "$regex": filters["client"],
-                                                "$options": "i",
-                                            }
-                                        },
-                                        {
-                                            "client_s": {
-                                                "$regex": filters["client"],
-                                                "$options": "i",
-                                            }
-                                        },
-                                    ]
+                            }
+                        )
+                    if filters.get("client"):
+                        match_stage["$and"].append(
+                            {
+                                "$or": [
+                                    {
+                                        "client": {
+                                            "$regex": filters["client"],
+                                            "$options": "i",
+                                        }
+                                    },
+                                    {
+                                        "client_s": {
+                                            "$regex": filters["client"],
+                                            "$options": "i",
+                                        }
+                                    },
+                                ]
+                            }
+                        )
+                    if filters.get("description"):
+                        match_stage["$and"].append(
+                            {
+                                "desc": {
+                                    "$regex": filters["description"],
+                                    "$options": "i",
                                 }
-                            )
-                        if filters.get(
-                            "description"
-                        ):  # Changed from desc to description
-                            match_stage["$and"].append(
-                                {
-                                    "desc": {
-                                        "$regex": filters["description"],
-                                        "$options": "i",
-                                    }
-                                }
-                            )
-                        if filters.get("effective_users"):
-                            match_stage["$and"].append(
-                                {
-                                    "effectiveUsers": {
-                                        "$elemMatch": {
-                                            "user": {
-                                                "$regex": filters["effective_users"],
-                                                "$options": "i",
-                                            }
+                            }
+                        )
+                    if filters.get("effective_users"):
+                        match_stage["$and"].append(
+                            {
+                                "effectiveUsers": {
+                                    "$elemMatch": {
+                                        "user": {
+                                            "$regex": filters["effective_users"],
+                                            "$options": "i",
                                         }
                                     }
                                 }
-                            )
-                        if (
-                            filters.get("running_time")
-                            and filters["running_time"].isdigit()
-                        ):
-                            match_stage["$and"].append(
-                                {"secs_running": {"$gte": int(filters["running_time"])}}
-                            )
+                            }
+                        )
+                    if (
+                        filters.get("running_time")
+                        and filters["running_time"].isdigit()
+                    ):
+                        match_stage["$and"].append(
+                            {"secs_running": {"$gte": int(filters["running_time"])}}
+                        )
 
-                    match_stage["$and"].append({"active": True})
+                match_stage["$and"].append({"active": True})
 
-                    if match_stage["$and"]:
-                        pipeline.append({"$match": match_stage})
+                if match_stage["$and"]:
+                    pipeline.append({"$match": match_stage})
 
-                cursor = await self.admin_db.aggregate(pipeline)
-                inprog = await cursor.to_list(None)
-            else:
-                # For mongod, use currentOp command directly
-                result = await self.admin_db.command("currentOp", current_op_args)
-                inprog = result.get("inprog", [])
-
-                # Apply filters manually for mongod
-                if filters or self.namespace:
-                    filtered_inprog = []
-                    for op in inprog:
-                        matches_all = True
-
-                        # Apply namespace filter if specified
-                        if self.namespace:
-                            matches_all &= bool(
-                                re.search(
-                                    f"^{self.namespace}",
-                                    op.get("ns", ""),
-                                    re.IGNORECASE,
-                                )
-                            )
-
-                        if filters:
-                            if filters.get("opid"):
-                                matches_all &= bool(
-                                    re.search(
-                                        filters["opid"],
-                                        str(op.get("opid", "")),
-                                        re.IGNORECASE,
-                                    )
-                                )
-                            if filters.get("operation"):
-                                matches_all &= bool(
-                                    re.search(
-                                        filters["operation"],
-                                        op.get("op", ""),
-                                        re.IGNORECASE,
-                                    )
-                                )
-                            if filters.get(
-                                "description"
-                            ):  # Changed from desc to description
-                                matches_all &= bool(
-                                    re.search(
-                                        filters["description"],
-                                        op.get("desc", ""),
-                                        re.IGNORECASE,
-                                    )
-                                )
-                            if filters.get("effective_users"):
-                                # Search through the effectiveUsers array
-                                effective_users = op.get("effectiveUsers", [])
-                                matches_all &= any(
-                                    bool(
-                                        re.search(
-                                            filters["effective_users"],
-                                            user.get("user", ""),
-                                            re.IGNORECASE,
-                                        )
-                                    )
-                                    for user in effective_users
-                                )
-                            if filters.get("client"):
-                                matches_all &= any(
-                                    re.search(
-                                        filters["client"],
-                                        str(client_value),
-                                        re.IGNORECASE,
-                                    )
-                                    for client_value in [
-                                        op.get("client"),
-                                        op.get("client_s", ""),
-                                    ]
-                                )
-                            if (
-                                filters.get("running_time")
-                                and filters["running_time"].isdigit()
-                            ):
-                                secs_running = op.get("secs_running", 0)
-                                matches_all &= isinstance(
-                                    secs_running, (int | float)
-                                ) and secs_running >= int(filters["running_time"])
-
-                        if matches_all:
-                            filtered_inprog.append(op)
-
-                    inprog = filtered_inprog
+            cursor = await self.admin_db.aggregate(pipeline)
+            inprog = await cursor.to_list(None)
 
             return inprog
         except PyMongoError as e:
