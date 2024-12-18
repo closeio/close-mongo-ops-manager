@@ -791,8 +791,8 @@ class MongoOpsManager(App):
 
     def on_mount(self) -> None:
         self.operations_view = self.query_one(OperationsView)
-        self.operations_view.loading = True
         self._status_bar = self.query_one(StatusBar)
+        self.operations_view.loading = True
         asyncio.create_task(self._setup())
 
     def action_show_help(self) -> None:
@@ -919,6 +919,7 @@ class MongoOpsManager(App):
 
         finally:
             self.operations_view.loading = False
+            self.operations_view.focus()
 
     def action_refresh(self) -> None:
         """Handle refresh action."""
