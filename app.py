@@ -7,6 +7,7 @@ import os
 import re
 import argparse
 import sys
+import time
 from typing import Any
 from collections.abc import Mapping
 from urllib.parse import quote_plus
@@ -79,8 +80,18 @@ class FilterChanged(Message):
     filters: dict[str, str]
 
 
+@dataclass
+class OperationsLoaded(Message):
+    """Event emitted when operations are fully loaded."""
+
+    count: int
+    duration: float
+
+
 class KillConfirmation(ModalScreen[bool]):
     """Modal screen for kill operation confirmation."""
+
+    AUTO_FOCUS = "#no"
 
     DEFAULT_CSS = """
     KillConfirmation {
@@ -135,7 +146,7 @@ class KillConfirmation(ModalScreen[bool]):
                 yield Button("No", variant="primary", id="no", classes="button")
 
     def on_mount(self) -> None:
-        self.query_one("#no").focus()
+        self.query_one("#no")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "yes":
@@ -240,6 +251,10 @@ class OperationsView(DataTable):
     }
     """
 
+    BINDINGS = [
+        Binding("enter,space", "select_cursor", "Select", show=False),
+    ]
+
     def __init__(self) -> None:
         super().__init__()
         self.cursor_type = "row"
@@ -256,7 +271,6 @@ class OperationsView(DataTable):
             "Type",
             "Operation",
             "Running Time",
-            "Active",
             "Client",
             "Description",
             "Effective Users",
@@ -302,6 +316,11 @@ class MongoDBManager:
             # Check if we're connected to a mongos
             self.is_sharded = await self._check_is_mongos()
 
+            server_info = await self.admin_db.client.server_info()
+            logger.info(
+                f"Connected to MongoDB {server_info.get('version', 'unknown version')}"
+            )
+
             return self
         except PyMongoError as e:
             raise ConnectionError(f"Failed to connect to MongoDB: {e}")
@@ -327,7 +346,7 @@ class MongoDBManager:
                 "backtrace": False,
             }
 
-            if await self._check_is_mongos():
+            if self.is_sharded:
                 # For mongos, use aggregate with $currentOp
                 pipeline = [{"$currentOp": current_op_args}]
 
@@ -625,7 +644,7 @@ class HelpScreen(ModalScreen):
     """
 
     BINDINGS = [
-        ("escape", "dismiss", "Help"),
+        Binding("escape", "dismiss", "Help", show=False),
     ]
 
     def compose(self) -> ComposeResult:
@@ -651,7 +670,7 @@ Ctrl+-  : Decrease refresh interval
 Usage:
 ------
 - Use arrow keys or mouse to navigate
-- Enter/Click to select operations
+- Space/Click to select operations
 - Filter operations using the input fields
 - Clear filters with the Clear button
 - Confirm kill operations when prompted
@@ -789,7 +808,7 @@ class MongoOpsManager(App):
         yield StatusBar()
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.operations_view = self.query_one(OperationsView)
         self._status_bar = self.query_one(StatusBar)
         self.operations_view.loading = True
@@ -874,9 +893,12 @@ class MongoOpsManager(App):
     async def refresh_operations(self) -> None:
         """Refresh the operations table with current data."""
         if not self.mongodb:
+            self.operations_view.loading = False
             return
 
+        start_time = time.monotonic()
         try:
+            self.operations_view.loading = True
             ops = await self.mongodb.get_operations(self.operations_view.filters)
 
             # Clear the operations table
@@ -892,6 +914,12 @@ class MongoOpsManager(App):
             for op in ops:
                 # Get client info
                 client_info = op.get("client_s") or op.get("client", "N/A")
+                client_metadata = op.get("clientMetadata", {})
+                mongos_info = client_metadata.get("mongos", {})
+                mongos_host = mongos_info.get("host", "")
+
+                if mongos_host:
+                    client_info = f"{client_info} ({mongos_host.split('.', 1)[0]})"
 
                 # Get effective users
                 effective_users = op.get("effectiveUsers", [])
@@ -907,19 +935,23 @@ class MongoOpsManager(App):
                     op.get("type", ""),
                     op.get("op", ""),
                     f"{op.get('secs_running', 0)}s",
-                    "✓" if op.get("active", False) else "✗",
                     client_info,
                     op.get("desc", "N/A"),
                     users_str,
                 )
                 self.operations_view.add_row(*row, key=str(op["opid"]))
 
+            # Calculate load duration and emit event
+            duration = time.monotonic() - start_time
+            self.operations_view.post_message(
+                OperationsLoaded(count=len(ops), duration=duration)
+            )
+
         except Exception as e:
             self.notify(f"Failed to refresh: {e}", severity="error")
 
         finally:
             self.operations_view.loading = False
-            self.operations_view.focus()
 
     def action_refresh(self) -> None:
         """Handle refresh action."""
@@ -1036,6 +1068,13 @@ class MongoOpsManager(App):
         )
         self.notify(f"Sorted by running time ({direction})")
         self.refresh_operations()
+
+    def on_operations_loaded(self, event: OperationsLoaded) -> None:
+        """Handle operations loaded event."""
+        logger.info(f"Loaded {event.count} operations in {event.duration:.2f} seconds")
+        if event.count > 0:
+            # Ensure focus is on the operations view after loading
+            self.operations_view.focus()
 
 
 def main() -> None:
