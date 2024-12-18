@@ -791,6 +791,7 @@ class MongoOpsManager(App):
 
     def on_mount(self) -> None:
         self.operations_view = self.query_one(OperationsView)
+        self.operations_view.loading = True
         self._status_bar = self.query_one(StatusBar)
         asyncio.create_task(self._setup())
 
@@ -915,6 +916,9 @@ class MongoOpsManager(App):
 
         except Exception as e:
             self.notify(f"Failed to refresh: {e}", severity="error")
+
+        finally:
+            self.operations_view.loading = False
 
     def action_refresh(self) -> None:
         """Handle refresh action."""
