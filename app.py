@@ -966,7 +966,6 @@ class MongoOpsManager(App):
                 try:
                     if await self.mongodb.kill_operation(opid):
                         success_count += 1
-                        logger.info(f"Successfully killed operation {opid}")
                     else:
                         error_count += 1
                         logger.error(
