@@ -418,8 +418,10 @@ class MongoDBManager:
         except PyMongoError as e:
             raise OperationError(f"Failed to get operations: {e}")
 
-    async def kill_operation(self, opid: str) -> bool:
-        """Kill operation with special handling for sharded clusters."""
+    async def kill_operation(
+        self, opid: str, max_retries: int = 3, verify_timeout: float = 5.0
+    ) -> bool:
+        """Kill a MongoDB operation with retries and verification."""
         try:
             # Convert string opid to numeric if possible (for non-sharded operations)
             numeric_opid = None
@@ -430,39 +432,89 @@ class MongoDBManager:
                     pass
 
             use_opid = numeric_opid if numeric_opid is not None else opid
-            result = await self.admin_db.command("killOp", op=use_opid)
 
-            # Check if operation was killed successfully
-            if result.get("ok") == 1:
-                # Verify the operation was killed by checking if it still exists
-                await asyncio.sleep(1.0)  # Brief wait for kill to take effect
+            # Try killing the operation with retries
+            for attempt in range(max_retries):
+                try:
+                    # Execute killOp command
+                    result = await self.admin_db.command("killOp", op=use_opid)
 
-                current_ops = await self.get_operations()
-                for op in current_ops:
-                    if str(op["opid"]) == str(opid):
+                    if result.get("ok") == 1:
+                        # Start verification process with timeout
+                        verification_start = time.monotonic()
+
+                        while time.monotonic() - verification_start < verify_timeout:
+                            # Check if operation still exists
+                            current_ops = await self.get_operations()
+                            operation_exists = any(
+                                str(op["opid"]) == str(opid) for op in current_ops
+                            )
+
+                            if not operation_exists:
+                                logger.info(
+                                    f"Successfully killed and verified operation {opid}"
+                                )
+                                return True
+
+                            # Brief pause before next verification check
+                            await asyncio.sleep(0.5)
+
+                        # If we reach here, operation still exists after timeout
                         logger.warning(
-                            f"Operation {opid} still exists after kill attempt"
+                            f"Operation {opid} still exists after kill attempt {attempt + 1}"
                         )
-                        return False
 
-                return True
+                        if attempt < max_retries - 1:
+                            # Wait before retry, with exponential backoff
+                            await asyncio.sleep(2**attempt)
+                            continue
 
+                except PyMongoError as e:
+                    # Special handling for sharded cluster operations
+                    if (
+                        "TypeMismatch" in str(e)
+                        and isinstance(opid, str)
+                        and ":" in opid
+                    ):
+                        try:
+                            # For sharded operations, try to extract and kill the numeric part
+                            shard_id, numeric_part = opid.split(":")
+                            if numeric_part.isdigit():
+                                logger.info(
+                                    f"Retrying kill with numeric part of sharded operation: {numeric_part}"
+                                )
+                                return await self.kill_operation(
+                                    numeric_part,
+                                    max_retries=max_retries - attempt,
+                                    verify_timeout=verify_timeout,
+                                )
+                        except Exception as inner_e:
+                            logger.error(
+                                f"Error processing sharded operation ID: {inner_e}"
+                            )
+
+                    # Log the error and continue retrying if attempts remain
+                    logger.error(
+                        f"Attempt {attempt + 1} failed to kill operation {opid}: {e}"
+                    )
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2**attempt)
+                        continue
+                    else:
+                        raise OperationError(
+                            f"Failed to kill operation {opid} after {max_retries} attempts: {e}"
+                        )
+
+            # If we reach here, all attempts failed
+            logger.error(
+                f"Failed to kill operation {opid} after {max_retries} attempts"
+            )
             return False
 
-        except PyMongoError as e:
-            # Special handling for sharded cluster operations
-            if "TypeMismatch" in str(e) and isinstance(opid, str) and ":" in opid:
-                try:
-                    # For sharded operations, try to extract and kill the numeric part
-                    shard_id, numeric_part = opid.split(":")
-                    if numeric_part.isdigit():
-                        logger.info(
-                            f"Retrying kill with numeric part of sharded operation: {numeric_part}"
-                        )
-                        return await self.kill_operation(numeric_part)
-                except Exception as inner_e:
-                    logger.error(f"Error processing sharded operation ID: {inner_e}")
-
+        except Exception as e:
+            logger.error(
+                f"Unexpected error killing operation {opid}: {e}", exc_info=True
+            )
             raise OperationError(f"Failed to kill operation {opid}: {e}")
 
 
