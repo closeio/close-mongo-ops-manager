@@ -959,6 +959,26 @@ class MongoOpsManager(App):
             if not confirmed or not self.mongodb:
                 return
 
+            # Get operation details before killing
+            current_ops = await self.mongodb.get_operations()
+            selected_ops = [
+                op
+                for op in current_ops
+                if str(op["opid"]) in self.operations_view.selected_ops
+            ]
+
+            for op in selected_ops:
+                command = op.get("command", {})
+                query_info = {
+                    "find": command.get("find"),
+                    "filter": command.get("filter"),
+                    "ns": op.get("ns"),
+                    "client": op.get("client"),
+                }
+                logger.info(
+                    f"Preparing to kill operation {op['opid']}. Query details: {query_info}"
+                )
+
             success_count = 0
             error_count = 0
 
