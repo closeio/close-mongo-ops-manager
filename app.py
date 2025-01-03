@@ -737,15 +737,16 @@ class MongoOpsManager(App):
     ) -> None:
         super().__init__()
         self.connection_string = connection_string
-        self.refresh_interval = max(
-            MIN_REFRESH_INTERVAL, min(refresh_interval, MAX_REFRESH_INTERVAL)
-        )
+        self.refresh_interval = refresh_interval
         self.mongodb: MongoDBManager | None = None
         self._refresh_task: asyncio.Task | None = None
         self.log_file = LOG_FILE
         self._status_bar: StatusBar
         self.namespace: str = namespace
-        self.auto_refresh = False
+
+    def validate_refresh_interval(self, value: float) -> float:
+        """Validate refresh interval."""
+        return max(MIN_REFRESH_INTERVAL, min(value, MAX_REFRESH_INTERVAL))
 
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
@@ -761,6 +762,7 @@ class MongoOpsManager(App):
         self.operations_view = self.query_one(OperationsView)
         self._status_bar = self.query_one(StatusBar)
         self.operations_view.loading = True
+        self._status_bar.set_refresh_interval(self.refresh_interval)
         asyncio.create_task(self._setup())
 
     def action_show_help(self) -> None:
@@ -1076,8 +1078,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--refresh-interval",
-        type=float,
-        default=float(
+        type=int,
+        default=int(
             os.environ.get("MONGODB_REFRESH_INTERVAL", str(DEFAULT_REFRESH_INTERVAL))
         ),
         help=f"Refresh interval in seconds (min: {MIN_REFRESH_INTERVAL}, max: {MAX_REFRESH_INTERVAL})",
@@ -1104,17 +1106,12 @@ def main() -> None:
             logger.info("Using unauthenticated connection")
 
         # Validate refresh interval
-        refresh_interval = args.refresh_interval
-        if refresh_interval < MIN_REFRESH_INTERVAL:
-            logger.warning(
-                f"Refresh interval too low, setting to minimum ({MIN_REFRESH_INTERVAL} seconds)"
-            )
-            refresh_interval = MIN_REFRESH_INTERVAL
-        elif refresh_interval > MAX_REFRESH_INTERVAL:
-            logger.warning(
-                f"Refresh interval too high, setting to maximum ({MAX_REFRESH_INTERVAL} seconds)"
-            )
-            refresh_interval = MAX_REFRESH_INTERVAL
+        refresh_interval = max(MIN_REFRESH_INTERVAL, min(args.refresh_interval, MAX_REFRESH_INTERVAL))
+        if refresh_interval != args.refresh_interval:
+            if args.refresh_interval < MIN_REFRESH_INTERVAL:
+                logger.warning(f"Refresh interval too low, setting to minimum ({MIN_REFRESH_INTERVAL} seconds)")
+            else:
+                logger.warning(f"Refresh interval too high, setting to maximum ({MAX_REFRESH_INTERVAL} seconds)")
 
         # Start the application
         app = MongoOpsManager(
