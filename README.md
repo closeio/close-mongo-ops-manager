@@ -35,9 +35,14 @@ uv sync
 
 # Running the app
 
-Launch the app with the required arguments
+Launch the application
 ```shell
-uv run app.py --help
+uv run src/close_mongo_ops_manager/app.py --help
+```
+
+Or you can just use `uvx`
+```shell
+uvx --python 3.13 close-mongo-ops-manager
 ```
 
 ![App screenshot](img/close-mongo-ops-manager.png "Close Mongo Ops Manager")
