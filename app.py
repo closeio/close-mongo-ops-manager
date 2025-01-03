@@ -305,23 +305,23 @@ class MongoDBManager:
                 connectTimeoutMS=5000,
             )
 
-            # Set up admin databases for both connections
+            # Set up admin databases
             self.admin_db = self.read_client.admin
 
-            # Verify both connections
+            # Verify connection
             await self.admin_db.command("ping")
 
-            server_info = await self.admin_db.client.server_info()
-            logger.info(
-                f"Connected to MongoDB {server_info.get('version', 'unknown version')}"
-            )
+            server_status = await self.admin_db.command("serverStatus")
+            version = server_status.get("version", "unknown version")
+            process = server_status.get("process", "unknown process")
+            logger.info(f"Connected to MongoDB {version} ({process})")
 
             return self
         except PyMongoError as e:
             raise ConnectionError(f"Failed to connect to MongoDB: {e}")
 
     async def get_operations(self, filters: dict[str, str] | None = None) -> list[dict]:
-        """Get current operations with appropriate handling for mongos/mongod."""
+        """Get current operations with appropriate handling"""
         try:
             # Base currentOp arguments
             current_op_args = {
