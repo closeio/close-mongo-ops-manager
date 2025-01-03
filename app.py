@@ -1106,12 +1106,18 @@ def main() -> None:
             logger.info("Using unauthenticated connection")
 
         # Validate refresh interval
-        refresh_interval = max(MIN_REFRESH_INTERVAL, min(args.refresh_interval, MAX_REFRESH_INTERVAL))
+        refresh_interval = max(
+            MIN_REFRESH_INTERVAL, min(args.refresh_interval, MAX_REFRESH_INTERVAL)
+        )
         if refresh_interval != args.refresh_interval:
             if args.refresh_interval < MIN_REFRESH_INTERVAL:
-                logger.warning(f"Refresh interval too low, setting to minimum ({MIN_REFRESH_INTERVAL} seconds)")
+                logger.warning(
+                    f"Refresh interval too low, setting to minimum ({MIN_REFRESH_INTERVAL} seconds)"
+                )
             else:
-                logger.warning(f"Refresh interval too high, setting to maximum ({MAX_REFRESH_INTERVAL} seconds)")
+                logger.warning(
+                    f"Refresh interval too high, setting to maximum ({MAX_REFRESH_INTERVAL} seconds)"
+                )
 
         # Start the application
         app = MongoOpsManager(
