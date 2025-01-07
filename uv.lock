@@ -3,7 +3,7 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "close-mongo-ops-manager"
-version = "0.1.14"
+version = "0.1.15"
 source = { editable = "." }
 dependencies = [
     { name = "pymongo" },
