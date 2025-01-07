@@ -290,12 +290,14 @@ class MongoDBManager:
         self.write_client = None
         self.admin_db: AsyncDatabase
         self.namespace: str = ""
+        self.hide_system_ops: bool = True
 
     @classmethod
-    async def connect(cls, connection_string: str, namespace: str) -> MongoDBManager:
+    async def connect(cls, connection_string: str, namespace: str, hide_system_ops: bool = True) -> MongoDBManager:
         self = cls()
         try:
             self.namespace = namespace
+            self.hide_system_ops = hide_system_ops
 
             # Create client
             conn_string = f"{connection_string}?readPreference=secondaryPreferred"
@@ -337,6 +339,18 @@ class MongoDBManager:
 
             if filters or self.namespace:
                 match_stage: Mapping[str, Any] = {"$and": []}
+
+                # Add system operations filter
+                if self.hide_system_ops:
+                    match_stage["$and"].append({
+                        "$nor": [
+                            {"ns": {"$regex": "^admin\\.", "$options": "i"}},
+                            {"ns": {"$regex": "^config\\.", "$options": "i"}},
+                            {"ns": {"$regex": "^local\\.", "$options": "i"}},
+                            {"op": "none"},  # Filter out no-op operations
+                            {"op": "command", "command.cursor": {"$exists": True}},  # Filter cursor operations
+                        ]
+                    })
 
                 if self.namespace:
                     match_stage["$and"].append(
@@ -734,6 +748,7 @@ class MongoOpsManager(App):
         connection_string: str,
         refresh_interval: float = DEFAULT_REFRESH_INTERVAL,
         namespace: str = "",
+        hide_system_ops: bool = True,
     ) -> None:
         super().__init__()
         self.connection_string = connection_string
@@ -743,6 +758,7 @@ class MongoOpsManager(App):
         self.log_file = LOG_FILE
         self._status_bar: StatusBar
         self.namespace: str = namespace
+        self.hide_system_ops = hide_system_ops
 
     def validate_refresh_interval(self, value: float) -> float:
         """Validate refresh interval."""
@@ -777,7 +793,7 @@ class MongoOpsManager(App):
         """Initialize MongoDB connection and start operation monitoring."""
         try:
             self.mongodb = await MongoDBManager.connect(
-                self.connection_string, self.namespace
+                self.connection_string, self.namespace, self.hide_system_ops
             )
             # Extract connection details for status bar
             parsed_uri = parse_uri(self.connection_string)
@@ -1084,6 +1100,11 @@ def main() -> None:
         ),
         help=f"Refresh interval in seconds (min: {MIN_REFRESH_INTERVAL}, max: {MAX_REFRESH_INTERVAL})",
     )
+    parser.add_argument(
+        "--show-system-ops",
+        action="store_true",
+        help="Show system operations (disabled by default)",
+    )
 
     args = parser.parse_args()
 
@@ -1124,6 +1145,7 @@ def main() -> None:
             connection_string=connection_string,
             refresh_interval=refresh_interval,
             namespace=args.namespace,
+            hide_system_ops=not args.show_system_ops,
         )
         app.run()
 
