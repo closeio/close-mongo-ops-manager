@@ -627,6 +627,7 @@ Ctrl+S  : Sort by running time
 Ctrl+H  : Show this help
 Ctrl+L  : View application logs
 Ctrl+U  : Deselect all operations
+Ctrl+A  : Select all operations
 Ctrl++  : Increase refresh interval
 Ctrl+-  : Decrease refresh interval
 
@@ -726,6 +727,7 @@ class MongoOpsManager(App):
         Binding("ctrl+h", "show_help", "Help"),
         Binding("ctrl+l", "show_logs", "View Logs"),
         Binding("ctrl+u", "deselect_all", "Deselect All"),
+        Binding("ctrl+a", "select_all", "Select All"),
         Binding(
             "ctrl+equals_sign",
             "increase_refresh",
@@ -863,8 +865,13 @@ class MongoOpsManager(App):
             self.operations_view.loading = False
             return
 
+        # Clear selected operations before refreshing.
+        # This is needed to avoid issues with deselection after refreshing.
+        self.operations_view.selected_ops.clear()
+
         start_time = time.monotonic()
         try:
+
             self.operations_view.loading = True
             ops = await self.mongodb.get_operations(self.operations_view.filters)
 
@@ -946,6 +953,22 @@ class MongoOpsManager(App):
 
         # Show notification
         self.notify(f"Deselected {count} operations")
+
+
+    def action_select_all(self) -> None:
+        """Select all operations in the view."""
+        # Clear any existing selections first
+        self.operations_view.selected_ops.clear()
+
+        # Add all row keys to selected_ops and update checkboxes
+        for idx, key in enumerate(self.operations_view.rows.keys()):
+            self.operations_view.selected_ops.add(str(key))
+            coord = Coordinate(idx, 0)
+            self.operations_view.update_cell_at(coord, "☒")
+
+        # Show notification
+        count = len(self.operations_view.selected_ops)
+        self.notify(f"Selected {count} operations")
 
     # FIXME: When refreshing the table after killing an operation
     # the selected row is keep selected and the checkbox is not unchecked.
