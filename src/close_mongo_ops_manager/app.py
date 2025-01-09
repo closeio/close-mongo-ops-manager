@@ -129,8 +129,8 @@ class KillConfirmation(ModalScreen[bool]):
     """
 
     def __init__(self, operations: list[str]) -> None:
-        self.operations = operations
         super().__init__()
+        self.operations = operations
 
     def compose(self) -> ComposeResult:
         count = len(self.operations)
@@ -968,7 +968,8 @@ class MongoOpsManager(App):
 
         # Show notification
         count = len(self.operations_view.selected_ops)
-        self.notify(f"Selected {count} operations")
+        if count > 0:
+            self.notify(f"Selected {count} operations")
 
     # FIXME: When refreshing the table after killing an operation
     # the selected row is keep selected and the checkbox is not unchecked.
@@ -1041,9 +1042,9 @@ class MongoOpsManager(App):
 
             # Clear selections after all operations are processed
             self.operations_view.clear_selections()
+            self.operations_view.selected_ops.clear()
 
-            # Refresh the view after a brief delay to allow operations to be killed
-            await asyncio.sleep(1.0)
+            # Refresh the view
             self.refresh_operations()
 
             # Show summary
