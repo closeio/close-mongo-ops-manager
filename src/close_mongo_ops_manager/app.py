@@ -27,6 +27,7 @@ from pymongo.errors import PyMongoError
 from pymongo.uri_parser import parse_uri
 
 
+
 # Constants
 LOG_FILE = "mongo_ops_manager.log"
 MIN_REFRESH_INTERVAL = 1
@@ -440,9 +441,17 @@ class MongoDBManager:
             raise OperationError(f"Failed to get operations: {e}")
 
     async def kill_operation(
-        self, opid: str, max_retries: int = 3, verify_timeout: float = 5.0
+        self, opid: str, max_retries: int = 2, verify_timeout: float = 5.0
     ) -> bool:
         """Kill a MongoDB operation with retries and verification."""
+
+        # Validate input parameters
+        if max_retries < 1:
+            max_retries = 1
+
+        if verify_timeout < 1.0:
+            verify_timeout = 1.0
+
         try:
             # Convert string opid to numeric if possible (for non-sharded operations)
             numeric_opid = None
@@ -967,7 +976,9 @@ class MongoOpsManager(App):
 
         # Add all row keys to selected_ops and update checkboxes
         for idx, key in enumerate(self.operations_view.rows.keys()):
-            self.operations_view.selected_ops.add(str(key))
+            # Convert RowKey to string value
+            row_key = str(getattr(key, 'value', key))
+            self.operations_view.selected_ops.add(row_key)
             coord = Coordinate(idx, 0)
             self.operations_view.update_cell_at(coord, "☒")
 
