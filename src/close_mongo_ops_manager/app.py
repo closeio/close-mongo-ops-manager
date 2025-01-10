@@ -293,7 +293,9 @@ class MongoDBManager:
         self.hide_system_ops: bool = True
 
     @classmethod
-    async def connect(cls, connection_string: str, namespace: str, hide_system_ops: bool = True) -> MongoDBManager:
+    async def connect(
+        cls, connection_string: str, namespace: str, hide_system_ops: bool = True
+    ) -> MongoDBManager:
         self = cls()
         try:
             self.namespace = namespace
@@ -342,15 +344,20 @@ class MongoDBManager:
 
                 # Add system operations filter
                 if self.hide_system_ops:
-                    match_stage["$and"].append({
-                        "$nor": [
-                            {"ns": {"$regex": "^admin\\.", "$options": "i"}},
-                            {"ns": {"$regex": "^config\\.", "$options": "i"}},
-                            {"ns": {"$regex": "^local\\.", "$options": "i"}},
-                            {"op": "none"},  # Filter out no-op operations
-                            {"op": "command", "command.cursor": {"$exists": True}},  # Filter cursor operations
-                        ]
-                    })
+                    match_stage["$and"].append(
+                        {
+                            "$nor": [
+                                {"ns": {"$regex": "^admin\\.", "$options": "i"}},
+                                {"ns": {"$regex": "^config\\.", "$options": "i"}},
+                                {"ns": {"$regex": "^local\\.", "$options": "i"}},
+                                {"op": "none"},  # Filter out no-op operations
+                                {
+                                    "op": "command",
+                                    "command.cursor": {"$exists": True},
+                                },  # Filter cursor operations
+                            ]
+                        }
+                    )
 
                 if self.namespace:
                     match_stage["$and"].append(
@@ -871,7 +878,6 @@ class MongoOpsManager(App):
 
         start_time = time.monotonic()
         try:
-
             self.operations_view.loading = True
             ops = await self.mongodb.get_operations(self.operations_view.filters)
 
@@ -953,7 +959,6 @@ class MongoOpsManager(App):
 
         # Show notification
         self.notify(f"Deselected {count} operations")
-
 
     def action_select_all(self) -> None:
         """Select all operations in the view."""
