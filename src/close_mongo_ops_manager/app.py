@@ -27,7 +27,6 @@ from pymongo.errors import PyMongoError
 from pymongo.uri_parser import parse_uri
 
 
-
 # Constants
 LOG_FILE = "mongo_ops_manager.log"
 MIN_REFRESH_INTERVAL = 1
@@ -252,7 +251,7 @@ class OperationsView(DataTable):
     """
 
     BINDINGS = [
-        Binding("enter,space", "select_cursor", "Select", show=False),
+        Binding("space", "select_cursor", "Select", show=False),
     ]
 
     def __init__(self) -> None:
@@ -263,6 +262,7 @@ class OperationsView(DataTable):
         self.sort_running_time_asc = True
         self.selected_ops: set[str] = set()
         self.can_focus = True
+        self.current_ops: list[dict] = []
 
     def on_mount(self) -> None:
         self.add_columns(
@@ -281,6 +281,107 @@ class OperationsView(DataTable):
         for idx, key in enumerate(self.rows.keys()):
             coord = Coordinate(idx, 0)
             self.update_cell_at(coord, "☐")
+
+    def on_key(self, event) -> None:
+        if event.key == "enter":
+            # Get the current row's operation data
+            if self.cursor_row is not None and 0 <= self.cursor_row < len(
+                self.current_ops
+            ):
+                op = self.current_ops[self.cursor_row]
+                self.show_operation_details(op)
+
+    def show_operation_details(self, op: dict) -> None:
+        """Show detailed view of the operation."""
+        self.app.push_screen(OperationDetailsScreen(op))
+
+
+class OperationDetailsScreen(ModalScreen):
+    """Screen for viewing detailed operation information."""
+
+    BORDER_TITLE = "Operation Details"
+
+    DEFAULT_CSS = """
+    OperationDetailsScreen {
+        align: center middle;
+    }
+
+    #details-container {
+        width: 80%;
+        height: auto;
+        max-width: 80%;
+        max-height: 80%;
+        border: round $primary;
+        background: $surface;
+        padding: 1;
+    }
+
+    #details-content {
+        width: 100%;
+        height: auto;
+        padding: 1;
+    }
+
+    .details-text {
+        width: 100%;
+        height: auto;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, operation: dict) -> None:
+        super().__init__()
+        self.operation = operation
+
+    def compose(self) -> ComposeResult:
+        with Container(id="details-container"):
+            with VerticalScroll(id="details-content"):
+                # Format operation details
+                details = []
+                details.append(f"Operation ID: {self.operation.get('opid', 'N/A')}")
+                details.append(f"Type: {self.operation.get('op', 'N/A')}")
+                details.append(f"Namespace: {self.operation.get('ns', 'N/A')}")
+                details.append(
+                    f"Running Time: {self.operation.get('secs_running', 0)}s"
+                )
+                # Get client info with fallbacks
+                client_info = (
+                    self.operation.get("client_s")
+                    or self.operation.get("client")
+                    or "N/A"
+                )
+
+                # Add mongos host info if available
+                mongos_host = (
+                    self.operation.get("clientMetadata", {})
+                    .get("mongos", {})
+                    .get("host", "")
+                )
+                if mongos_host:
+                    # Extract first part of hostname for brevity
+                    short_host = mongos_host.split(".", 1)[0]
+                    client_info = f"{client_info} ({short_host})"
+
+                details.append(f"Client: {client_info}")
+
+                # Format command details
+                command = self.operation.get("command", {})
+                if command:
+                    details.append("\nCommand Details:")
+                    for key, value in command.items():
+                        details.append(f"  {key}: {value}")
+
+                # Format plan summary if available
+                plan_summary = self.operation.get("planSummary", "")
+                if plan_summary:
+                    details.append(f"\nPlan Summary: {plan_summary}")
+
+                # Join all details with newlines
+                yield Static("\n".join(details), classes="details-text")
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss()
 
 
 class MongoDBManager:
@@ -646,6 +747,7 @@ Ctrl+U  : Deselect all operations
 Ctrl+A  : Select all operations
 Ctrl++  : Increase refresh interval
 Ctrl+-  : Decrease refresh interval
+Enter   : See operation details
 
 Usage:
 ------
@@ -890,6 +992,9 @@ class MongoOpsManager(App):
             self.operations_view.loading = True
             ops = await self.mongodb.get_operations(self.operations_view.filters)
 
+            # Store the operations data in the view
+            self.operations_view.current_ops = ops
+
             # Clear the operations table
             self.operations_view.clear()
 
@@ -977,7 +1082,7 @@ class MongoOpsManager(App):
         # Add all row keys to selected_ops and update checkboxes
         for idx, key in enumerate(self.operations_view.rows.keys()):
             # Convert RowKey to string value
-            row_key = str(getattr(key, 'value', key))
+            row_key = str(getattr(key, "value", key))
             self.operations_view.selected_ops.add(row_key)
             coord = Coordinate(idx, 0)
             self.operations_view.update_cell_at(coord, "☒")
