@@ -18,7 +18,7 @@ from textual.containers import Container, Horizontal, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Footer, Header, Input, Static
+from textual.widgets import Button, DataTable, Footer, Header, Input, Static, TextArea
 from textual.coordinate import Coordinate
 
 from pymongo import AsyncMongoClient
@@ -308,7 +308,7 @@ class OperationDetailsScreen(ModalScreen):
 
     #details-container {
         width: 80%;
-        height: auto;
+        height: 80%;
         max-width: 80%;
         max-height: 80%;
         border: round $primary;
@@ -377,7 +377,7 @@ class OperationDetailsScreen(ModalScreen):
                     details.append(f"\nPlan Summary: {plan_summary}")
 
                 # Join all details with newlines
-                yield Static("\n".join(details), classes="details-text")
+                yield TextArea("\n".join(details), classes="details-text", read_only=True)
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -453,6 +453,11 @@ class MongoDBManager:
                                 {"ns": {"$regex": "^config\\.", "$options": "i"}},
                                 {"ns": {"$regex": "^local\\.", "$options": "i"}},
                                 {"op": "none"},  # Filter out no-op operations
+                                {
+                                    "effectiveUsers": {
+                                        "$not": {"$elemMatch": {"user": "__system"}}
+                                    }
+                                },  # Filter out system users
                                 {
                                     "op": "command",
                                     "command.cursor": {"$exists": True},
