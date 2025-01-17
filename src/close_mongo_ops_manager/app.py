@@ -14,7 +14,7 @@ from urllib.parse import quote_plus
 from textual import work
 from textual.binding import Binding
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
+from textual.containers import Container, Horizontal, VerticalScroll, ScrollableContainer
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -334,7 +334,7 @@ class OperationDetailsScreen(ModalScreen):
         self.operation = operation
 
     def compose(self) -> ComposeResult:
-        with Container(id="details-container"):
+        with ScrollableContainer(id="details-container"):
             with VerticalScroll(id="details-content"):
                 # Format operation details
                 details = []
