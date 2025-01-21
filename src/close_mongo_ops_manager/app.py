@@ -11,10 +11,17 @@ from typing import Any
 from collections.abc import Mapping
 from urllib.parse import quote_plus
 
+
 from textual import work
 from textual.binding import Binding
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll, ScrollableContainer
+from textual.containers import (
+    Container,
+    Horizontal,
+    VerticalScroll,
+    ScrollableContainer,
+    Center,
+)
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -313,7 +320,6 @@ class OperationDetailsScreen(ModalScreen):
         max-height: 80%;
         border: round $primary;
         background: $surface;
-        padding: 1;
     }
 
     #details-content {
@@ -377,7 +383,9 @@ class OperationDetailsScreen(ModalScreen):
                     details.append(f"\nPlan Summary: {plan_summary}")
 
                 # Join all details with newlines
-                yield TextArea("\n".join(details), classes="details-text", read_only=True)
+                yield TextArea(
+                    "\n".join(details), classes="details-text", read_only=True
+                )
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -733,37 +741,41 @@ class HelpScreen(ModalScreen):
     ]
 
     def compose(self) -> ComposeResult:
-        with Container(id="help-container"):
-            yield Static(
-                "Close MongoDB Operations Manager Help", classes="section-title"
-            )
-            yield Static(
-                """
-Keyboard Shortcuts:
-------------------
-Ctrl+Q  : Quit application
-Ctrl+R  : Refresh operations list
-Ctrl+K  : Kill selected operations
-Ctrl+P  : Pause/Resume auto-refresh
-Ctrl+S  : Sort by running time
-Ctrl+H  : Show this help
-Ctrl+L  : View application logs
-Ctrl+U  : Deselect all operations
-Ctrl+A  : Select all operations
-Ctrl++  : Increase refresh interval
-Ctrl+-  : Decrease refresh interval
-Enter   : See operation details
+        yield Footer()
+        with VerticalScroll(id="help-container") as vertical_scroll:
+            with Center():
+                yield Static(
+                    "Close MongoDB Operations Manager", classes="section-title"
+                )
+                yield Static(
+                    """
+    Keyboard Shortcuts:
+    ------------------
+    Ctrl+Q  : Quit application
+    Ctrl+R  : Refresh operations list
+    Ctrl+K  : Kill selected operations
+    Ctrl+P  : Pause/Resume auto-refresh
+    Ctrl+S  : Sort by running time
+    Ctrl+H  : Show this help
+    Ctrl+L  : View application logs
+    Ctrl+U  : Deselect all operations
+    Ctrl+A  : Select all operations
+    Ctrl++  : Increase refresh interval
+    Ctrl+-  : Decrease refresh interval
+    Enter   : See operation details
 
-Usage:
-------
-- Use arrow keys or mouse to navigate
-- Space/Click to select operations
-- Filter operations using the input fields
-- Clear filters with the Clear button
-- Confirm kill operations when prompted
-            """,
-                classes="help-content",
-            )
+    Usage:
+    ------
+    - Use arrow keys or mouse to navigate
+    - Space/Click to select operations
+    - Filter operations using the input fields
+    - Clear filters with the Clear button
+    - Confirm kill operations when prompted
+                """,
+                    classes="help-content",
+                )
+        vertical_scroll.border_title = "Help"
+        vertical_scroll.border_subtitle = "ESCAPE to dismiss"
 
 
 class LogScreen(ModalScreen):
@@ -799,14 +811,18 @@ class LogScreen(ModalScreen):
         self.log_file = log_file
 
     def compose(self) -> ComposeResult:
+        yield Footer()
         with Container(id="log-container"):
-            with VerticalScroll(id="log-content"):
-                try:
-                    with open(self.log_file) as f:
-                        content = f.read()
-                    yield Static(content)
-                except Exception as e:
-                    yield Static(f"Error reading log file: {e}")
+            with VerticalScroll(id="log-content") as vertical_scroll:
+                with Center():
+                    try:
+                        with open(self.log_file) as f:
+                            content = f.read()
+                        yield Static(content)
+                    except Exception as e:
+                        yield Static(f"Error reading log file: {e}")
+            vertical_scroll.border_title = "Application Logs"
+            vertical_scroll.border_subtitle = "ESCAPE to dismiss"
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -842,12 +858,12 @@ class MongoOpsManager(App):
     """
 
     BINDINGS = [
+        Binding("f1", "show_help", "Help"),
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+r", "refresh", "Refresh"),
         Binding("ctrl+k", "kill_selected", "Kill Selected"),
         Binding("ctrl+p", "toggle_refresh", "Pause/Resume"),
         Binding("ctrl+s", "sort_by_time", "Sort by Time"),
-        Binding("ctrl+h", "show_help", "Help"),
         Binding("ctrl+l", "show_logs", "View Logs"),
         Binding("ctrl+u", "deselect_all", "Deselect All"),
         Binding("ctrl+a", "select_all", "Select All"),
