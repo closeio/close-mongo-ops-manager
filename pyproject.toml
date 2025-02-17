@@ -1,14 +1,14 @@
 [project]
 name = "close-mongo-ops-manager"
-version = "0.1.21"
+version = "0.1.22"
 description = "Monitor and kill MongoDB operations"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Vicenç Juan Tomàs Monserrat", email = "vicenc.monserrat@close.com" }]
 dependencies = [
-    "pymongo>=4.10.1, <5.0.0",
-    "textual>=1.0.0,<2.0.0",
+    "pymongo>=4.11.1, <5.0.0",
+    "textual>=2.0.0,<3.0.0",
 ]
 keywords = [
   "mongo", "operations", "manager"
