@@ -396,8 +396,7 @@ class MongoDBManager:
     """Handles MongoDB connection and operations."""
 
     def __init__(self) -> None:
-        self.read_client = None
-        self.write_client = None
+        self.client = None
         self.admin_db: AsyncDatabase
         self.namespace: str = ""
         self.hide_system_ops: bool = True
@@ -413,14 +412,14 @@ class MongoDBManager:
 
             # Create client
             conn_string = f"{connection_string}?readPreference=secondaryPreferred"
-            self.read_client = AsyncMongoClient(
+            self.client = AsyncMongoClient(
                 conn_string,
                 serverSelectionTimeoutMS=5000,
                 connectTimeoutMS=5000,
             )
 
             # Set up admin databases
-            self.admin_db = self.read_client.admin
+            self.admin_db = self.client.admin
 
             # Verify connection
             await self.admin_db.command("ping")
