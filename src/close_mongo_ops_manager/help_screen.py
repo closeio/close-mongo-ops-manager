@@ -55,18 +55,19 @@ class HelpScreen(ModalScreen):
                     """
     Keyboard Shortcuts:
     ------------------
+    f1      : Show this help
     Ctrl+Q  : Quit application
     Ctrl+R  : Refresh operations list
     Ctrl+K  : Kill selected operations
     Ctrl+P  : Pause/Resume auto-refresh
     Ctrl+S  : Sort by running time
-    Ctrl+H  : Show this help
     Ctrl+L  : View application logs
     Ctrl+U  : Deselect all operations
     Ctrl+A  : Select all operations
     Ctrl++  : Increase refresh interval
     Ctrl+-  : Decrease refresh interval
     Enter   : See operation details
+    Space   : Select operations
 
     Usage:
     ------
