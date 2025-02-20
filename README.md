@@ -48,7 +48,7 @@ uvx -n close-mongo-ops-manager
 ## Usage
 
 These are the actions you can do in the app. You can see them in the app help menu as well.
-
+```
 f1      : Show this help
 Ctrl+Q  : Quit application
 Ctrl+R  : Refresh operations list
@@ -62,6 +62,7 @@ Ctrl++  : Increase refresh interval
 Ctrl+-  : Decrease refresh interval
 Enter   : See operation details
 Space   : Select operation
+```
 
 The mouse is enabled, so all menus are clickable.
 
