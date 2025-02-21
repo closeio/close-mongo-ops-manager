@@ -7,7 +7,7 @@ import argparse
 import sys
 import time
 from urllib.parse import quote_plus
-
+from importlib.metadata import version
 
 from textual import work
 from textual.binding import Binding
@@ -445,7 +445,9 @@ class MongoOpsManager(App):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Close MongoDB Operations Manager")
+    parser = argparse.ArgumentParser(
+        description=f"Close MongoDB Operations Manager v{version('close-mongo-ops-manager')}"
+    )
     parser.add_argument(
         "--host",
         default=os.environ.get("MONGODB_HOST", "localhost"),
@@ -485,6 +487,12 @@ def main() -> None:
         "--show-system-ops",
         action="store_true",
         help="Show system operations (disabled by default)",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"v{version('close-mongo-ops-manager')}",
+        help="Show the version of the application",
     )
 
     args = parser.parse_args()
