@@ -92,5 +92,4 @@ class OperationDetailsScreen(ModalScreen):
                 )
 
     def on_key(self, event) -> None:
-        if event.key == "escape":
-            self.dismiss()
+        self.dismiss(event.key == "escape")

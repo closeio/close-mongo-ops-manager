@@ -1,13 +1,13 @@
 from textual.app import ComposeResult
 from textual.containers import (
-    Container,
+    Horizontal,
 )
 from textual.widgets import Button, Input
 
 from close_mongo_ops_manager.messages import FilterChanged
 
 
-class FilterBar(Container):
+class FilterBar(Horizontal):
     """Container for filter inputs."""
 
     BORDER_TITLE = "Filters"
@@ -17,25 +17,22 @@ class FilterBar(Container):
     DEFAULT_CSS = """
     FilterBar {
         height: auto;
-        layout: horizontal;
         background: $surface;
         border: solid $primary;
-        padding: 1;
-        margin: 0 1;
         width: 100%;
     }
 
     .filter-input {
-        margin: 0 1;
-        width: 1fr;
-        border: solid $primary;
+        height: auto;
+        width: 10fr;
+        border: tall $primary;
     }
 
     #clear-filters {
-        margin: 0 1;
+        padding: 0 2;
         width: auto;
         background: $primary;
-
+        height: auto;
         &:hover {
             background: $primary-darken-2;
         }

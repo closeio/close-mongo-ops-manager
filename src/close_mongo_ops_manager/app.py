@@ -12,13 +12,10 @@ from urllib.parse import quote_plus
 from textual import work
 from textual.binding import Binding
 from textual.app import App, ComposeResult
-from textual.containers import (
-    Container,
-    VerticalScroll,
-)
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Header
 from textual.coordinate import Coordinate
+from textual.containers import VerticalScroll
 
 from pymongo.uri_parser import parse_uri
 
@@ -33,7 +30,7 @@ from close_mongo_ops_manager.statusbar import StatusBar
 
 
 # Constants
-LOG_FILE = "mongo_ops_manager.log"
+LOG_FILE = "close_mongo_ops_manager.log"
 MIN_REFRESH_INTERVAL = 1
 MAX_REFRESH_INTERVAL = 10
 DEFAULT_REFRESH_INTERVAL = 5
@@ -67,18 +64,12 @@ class MongoOpsManager(App):
     AUTO_FOCUS = "OperationsView"
 
     CSS = """
-    Screen {
+    MongoOpsManager {
         align: center top;
         padding: 0;
     }
 
     VerticalScroll {
-        width: 100%;
-        padding: 0;
-        margin: 0;
-    }
-
-    Container {
         width: 100%;
         padding: 0;
         margin: 0;
@@ -110,12 +101,12 @@ class MongoOpsManager(App):
     ]
 
     auto_refresh: reactive[bool] = reactive(False)
-    refresh_interval: reactive[float] = reactive(DEFAULT_REFRESH_INTERVAL)
+    refresh_interval: reactive[int] = reactive(DEFAULT_REFRESH_INTERVAL)
 
     def __init__(
         self,
         connection_string: str,
-        refresh_interval: float = DEFAULT_REFRESH_INTERVAL,
+        refresh_interval: int = DEFAULT_REFRESH_INTERVAL,
         namespace: str = "",
         hide_system_ops: bool = True,
     ) -> None:
@@ -129,17 +120,16 @@ class MongoOpsManager(App):
         self.namespace: str = namespace
         self.hide_system_ops = hide_system_ops
 
-    def validate_refresh_interval(self, value: float) -> float:
+    def validate_refresh_interval(self, value: int) -> int:
         """Validate refresh interval."""
         return max(MIN_REFRESH_INTERVAL, min(value, MAX_REFRESH_INTERVAL))
 
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
         yield Header()
-        with Container():
-            yield FilterBar()
-            with VerticalScroll():
-                yield OperationsView()
+        yield FilterBar()
+        with VerticalScroll(can_focus=False, can_focus_children=True):
+            yield OperationsView()
         yield StatusBar(self.refresh_interval)
         yield Footer()
 
@@ -201,7 +191,7 @@ class MongoOpsManager(App):
         )
         if new_interval != self.refresh_interval:
             self.refresh_interval = new_interval
-            self.notify(f"Refresh interval increased to {self.refresh_interval:.1f}s")
+            self.notify(f"Refresh interval increased to {self.refresh_interval}s")
             self._status_bar.set_refresh_interval(self.refresh_interval)
 
     def action_decrease_refresh(self) -> None:
@@ -211,7 +201,7 @@ class MongoOpsManager(App):
         )
         if new_interval != self.refresh_interval:
             self.refresh_interval = new_interval
-            self.notify(f"Refresh interval decreased to {self.refresh_interval:.1f}s")
+            self.notify(f"Refresh interval decreased to {self.refresh_interval}s")
             self._status_bar.set_refresh_interval(self.refresh_interval)
 
     async def auto_refreshing(self) -> None:
@@ -452,9 +442,6 @@ class MongoOpsManager(App):
     def on_operations_loaded(self, event: OperationsLoaded) -> None:
         """Handle operations loaded event."""
         logger.info(f"Loaded {event.count} operations in {event.duration:.2f} seconds")
-        if event.count > 0:
-            # Ensure focus is on the operations view after loading
-            self.operations_view.focus()
 
 
 def main() -> None:

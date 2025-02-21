@@ -17,7 +17,7 @@ class KillConfirmation(ModalScreen[bool]):
         align: center middle;
         width: auto;
         height: auto;
-        padding: 1;
+        padding: 0;
     }
 
     #dialog {
@@ -31,7 +31,7 @@ class KillConfirmation(ModalScreen[bool]):
     }
 
     #question {
-        padding: 1;
+        padding: 0;
         text-align: center;
         width: auto;
     }
@@ -43,7 +43,6 @@ class KillConfirmation(ModalScreen[bool]):
     }
 
     Button {
-        width: 8;
         margin: 0 2;
     }
     """
@@ -68,13 +67,11 @@ class KillConfirmation(ModalScreen[bool]):
         self.query_one("#no")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "yes":
-            self.dismiss(True)
-        else:
-            self.dismiss(False)
+        self.dismiss(event.button.id == "yes")
 
     def on_key(self, event) -> None:
-        if event.key == "escape":
-            self.dismiss(False)
-        elif event.key == "enter" and self.query_one("#yes").has_focus:
-            self.dismiss(True)
+        match event.key:
+            case "escape":
+                self.dismiss(False)
+            case "enter" if self.query_one("#yes").has_focus:
+                self.dismiss(True)

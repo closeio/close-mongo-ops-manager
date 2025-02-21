@@ -10,16 +10,14 @@ class OperationsView(DataTable):
 
     BORDER_TITLE = "Operations"
 
+    BORDER_SUBTITLE = "View and manage MongoDB operations"
+
     DEFAULT_CSS = """
     OperationsView {
         height: 100%;
-        margin: 0 1;
+        margin: 0;
         border: solid $primary;
         width: 100%;
-    }
-
-    DataTable {
-        height: auto;
     }
     """
 

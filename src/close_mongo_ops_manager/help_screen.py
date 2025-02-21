@@ -17,26 +17,21 @@ class HelpScreen(ModalScreen):
     }
 
     #help-container {
-        width: 50%;
+        width: auto;
         height: auto;
-        max-width: 50%;
+        max-width: 30%;
         max-height: 80%;
         border: round $primary;
         background: $surface;
-        padding: 1;
+        padding: 0;
         overflow-y: auto;
     }
 
     .help-content {
-        width: 50%;
+        width: auto;
         height: auto;
         padding: 1;
-    }
-
-    .section-title {
-        text-style: bold;
-        color: $text;
-        padding: 1;
+        align: left middle;
     }
     """
 
@@ -48,9 +43,6 @@ class HelpScreen(ModalScreen):
         yield Footer()
         with VerticalScroll(id="help-container") as vertical_scroll:
             with Center():
-                yield Static(
-                    "Close MongoDB Operations Manager", classes="section-title"
-                )
                 yield Static(
                     """
     Keyboard Shortcuts:
