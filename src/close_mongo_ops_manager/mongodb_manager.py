@@ -82,11 +82,7 @@ class MongoDBManager:
                                 {"ns": {"$regex": "^config\\.", "$options": "i"}},
                                 {"ns": {"$regex": "^local\\.", "$options": "i"}},
                                 {"op": "none"},  # Filter out no-op operations
-                                {
-                                    "effectiveUsers": {
-                                        "$not": {"$elemMatch": {"user": "__system"}}
-                                    }
-                                },  # Filter out system users
+                                {"effectiveUsers.user": "__system"},  # exclude system users
                                 {
                                     "op": "command",
                                     "command.cursor": {"$exists": True},
