@@ -7,7 +7,7 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import PyMongoError
 
-from close_mongo_ops_manager.exceptions import OperationError
+from close_mongo_ops_manager.exceptions import MongoConnectionError, OperationError
 
 import logging
 
@@ -53,7 +53,7 @@ class MongoDBManager:
 
             return self
         except PyMongoError as e:
-            raise ConnectionError(f"Failed to connect to MongoDB: {e}")
+            raise MongoConnectionError(f"Failed to connect to MongoDB: {e}")
 
     async def get_operations(self, filters: dict[str, str] | None = None) -> list[dict]:
         """Get current operations with appropriate handling"""
@@ -175,6 +175,9 @@ class MongoDBManager:
         self, opid: str, max_retries: int = 2, verify_timeout: float = 5.0
     ) -> bool:
         """Kill a MongoDB operation with retries and verification."""
+        if not opid:
+            logger.error("Cannot kill operation with empty opid")
+            return False
 
         # Validate input parameters
         if max_retries < 1:

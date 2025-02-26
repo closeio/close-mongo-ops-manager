@@ -186,9 +186,8 @@ class MongoOpsManager(App):
 
     def action_increase_refresh(self) -> None:
         """Increase the refresh interval."""
-        new_interval = min(
-            MAX_REFRESH_INTERVAL, self.refresh_interval + STEP_REFRESH_INTERVAL
-        )
+        new_interval = self.refresh_interval + STEP_REFRESH_INTERVAL
+        new_interval = self.validate_refresh_interval(new_interval)
         if new_interval != self.refresh_interval:
             self.refresh_interval = new_interval
             self.notify(f"Refresh interval increased to {self.refresh_interval}s")
@@ -196,9 +195,8 @@ class MongoOpsManager(App):
 
     def action_decrease_refresh(self) -> None:
         """Decrease the refresh interval."""
-        new_interval = max(
-            MIN_REFRESH_INTERVAL, self.refresh_interval - STEP_REFRESH_INTERVAL
-        )
+        new_interval = self.refresh_interval - STEP_REFRESH_INTERVAL
+        new_interval = self.validate_refresh_interval(new_interval)
         if new_interval != self.refresh_interval:
             self.refresh_interval = new_interval
             self.notify(f"Refresh interval decreased to {self.refresh_interval}s")

@@ -5,7 +5,7 @@ class MongoOpsError(Exception):
     pass
 
 
-class ConnectionError(MongoOpsError):
+class MongoConnectionError(MongoOpsError):
     """Exception raised for connection-related errors."""
 
     pass
