@@ -1,3 +1,4 @@
+from textual.binding import Binding
 from textual.app import ComposeResult
 from textual.containers import (
     Container,
@@ -31,6 +32,10 @@ class LogScreen(ModalScreen):
     }
     """
 
+    BINDINGS = [
+        Binding("escape", "dismiss", "Log Screen", show=False),
+    ]
+
     def __init__(self, log_file: str) -> None:
         super().__init__()
         self.log_file = log_file
@@ -48,6 +53,3 @@ class LogScreen(ModalScreen):
 
             vertical_scroll.border_title = "Application Logs"
             vertical_scroll.border_subtitle = "ESCAPE to dismiss"
-
-    def on_key(self, event) -> None:
-        self.dismiss(event.key == "escape")

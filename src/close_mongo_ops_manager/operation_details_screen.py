@@ -1,3 +1,4 @@
+from textual.binding import Binding
 from textual.app import ComposeResult
 from textual.containers import (
     VerticalScroll,
@@ -38,6 +39,10 @@ class OperationDetailsScreen(ModalScreen):
         padding: 0 1;
     }
     """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Operation Details", show=False),
+    ]
 
     def __init__(self, operation: dict) -> None:
         super().__init__()
@@ -90,6 +95,3 @@ class OperationDetailsScreen(ModalScreen):
                 yield TextArea(
                     "\n".join(details), classes="details-text", read_only=True
                 )
-
-    def on_key(self, event) -> None:
-        self.dismiss(event.key == "escape")
