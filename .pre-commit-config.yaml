@@ -1,0 +1,9 @@
+repos:
+  - repo: "https://github.com/astral-sh/uv-pre-commit"
+    rev: 0.6.3
+    hooks:
+      - id: uv-lock
+  - repo: "https://github.com/astral-sh/uv-pre-commit"
+    rev: 0.6.3
+    hooks:
+      - id: uv-export
