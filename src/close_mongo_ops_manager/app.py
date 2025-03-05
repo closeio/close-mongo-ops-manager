@@ -120,7 +120,8 @@ class MongoOpsManager(App):
         self.namespace: str = namespace
         self.hide_system_ops = hide_system_ops
 
-    def validate_refresh_interval(self, value: int) -> int:
+    @staticmethod
+    def validate_refresh_interval(value: int) -> int:
         """Validate refresh interval."""
         return max(MIN_REFRESH_INTERVAL, min(value, MAX_REFRESH_INTERVAL))
 
@@ -187,7 +188,7 @@ class MongoOpsManager(App):
     def action_increase_refresh(self) -> None:
         """Increase the refresh interval."""
         new_interval = self.refresh_interval + STEP_REFRESH_INTERVAL
-        new_interval = self.validate_refresh_interval(new_interval)
+        new_interval = MongoOpsManager.validate_refresh_interval(new_interval)
         if new_interval != self.refresh_interval:
             self.refresh_interval = new_interval
             self.notify(f"Refresh interval increased to {self.refresh_interval}s")
@@ -196,7 +197,7 @@ class MongoOpsManager(App):
     def action_decrease_refresh(self) -> None:
         """Decrease the refresh interval."""
         new_interval = self.refresh_interval - STEP_REFRESH_INTERVAL
-        new_interval = self.validate_refresh_interval(new_interval)
+        new_interval = MongoOpsManager.validate_refresh_interval(new_interval)
         if new_interval != self.refresh_interval:
             self.refresh_interval = new_interval
             self.notify(f"Refresh interval decreased to {self.refresh_interval}s")
@@ -441,6 +442,14 @@ class MongoOpsManager(App):
         """Handle operations loaded event."""
         logger.info(f"Loaded {event.count} operations in {event.duration:.2f} seconds")
 
+    async def on_unmount(self) -> None:
+        """Clean up resources when the application exits."""
+        if self.mongodb:
+            try:
+                await self.mongodb.close()
+            except Exception as e:
+                logger.error(f"Error closing MongoDB connections: {e}")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -495,6 +504,10 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    logger.info(
+        f"Starting Close MongoDB Operations Manager v{version('close-mongo-ops-manager')}"
+    )
+
     # Build connection string
     username = args.username or os.environ.get("MONGODB_USERNAME")
     password = args.password or os.environ.get("MONGODB_PASSWORD")
@@ -511,11 +524,11 @@ def main() -> None:
         else:
             # Use unauthenticated connection
             connection_string = f"mongodb://{host}:{port}/"
-            logger.info("Using unauthenticated connection")
+            logger.warning("Using unauthenticated connection")
 
         # Validate refresh interval
-        refresh_interval = max(
-            MIN_REFRESH_INTERVAL, min(args.refresh_interval, MAX_REFRESH_INTERVAL)
+        refresh_interval = MongoOpsManager.validate_refresh_interval(
+            args.refresh_interval
         )
         if refresh_interval != args.refresh_interval:
             if args.refresh_interval < MIN_REFRESH_INTERVAL:
@@ -535,6 +548,8 @@ def main() -> None:
             hide_system_ops=not args.show_system_ops,
         )
         app.run()
+
+        logger.info("Exiting Close MongoDB Operations Manager. Hasta luego!")
 
     except Exception as e:
         logger.error(f"Startup error: {e}", exc_info=True)

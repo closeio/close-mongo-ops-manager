@@ -11,17 +11,28 @@ from close_mongo_ops_manager.exceptions import MongoConnectionError, OperationEr
 
 import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("mongo_ops_manager")
 
 
 class MongoDBManager:
     """Handles MongoDB connection and operations."""
 
     def __init__(self) -> None:
-        self.client = None
+        self.client: AsyncMongoClient = AsyncMongoClient()
         self.admin_db: AsyncDatabase
         self.namespace: str = ""
         self.hide_system_ops: bool = True
+
+    async def close(self) -> None:
+        """Close all MongoDB connections properly."""
+        logger.info("Closing MongoDB connections")
+
+        try:
+            if self.client:
+                await self.client.close()
+                logger.debug("Closed main MongoDB connection")
+        except Exception as e:
+            logger.warning(f"Error closing main MongoDB connection: {e}")
 
     @classmethod
     async def connect(
@@ -82,7 +93,9 @@ class MongoDBManager:
                                 {"ns": {"$regex": "^config\\.", "$options": "i"}},
                                 {"ns": {"$regex": "^local\\.", "$options": "i"}},
                                 {"op": "none"},  # Filter out no-op operations
-                                {"effectiveUsers.user": "__system"},  # exclude system users
+                                {
+                                    "effectiveUsers.user": "__system"
+                                },  # exclude system users
                                 {
                                     "op": "command",
                                     "command.cursor": {"$exists": True},
@@ -171,6 +184,23 @@ class MongoDBManager:
         except PyMongoError as e:
             raise OperationError(f"Failed to get operations: {e}")
 
+    async def _operation_exists(self, opid: str) -> bool:
+        """Check if operation still exists with minimal query."""
+        try:
+            pipeline = [
+                {"$currentOp": {"allUsers": True}},
+                {"$match": {"opid": {"$eq": str(opid)}}},
+                {"$project": {"_id": 0, "opid": 1}},
+                {"$limit": 1},
+            ]
+
+            result = await self.admin_db.aggregate(pipeline)
+            result_list = await result.to_list(1)
+            return len(result_list) > 0  # Operation exists if result is not empty
+        except Exception as e:
+            logger.warning(f"Error checking operation existence: {e}")
+            return False
+
     async def kill_operation(
         self, opid: str, max_retries: int = 2, verify_timeout: float = 5.0
     ) -> bool:
@@ -209,10 +239,7 @@ class MongoDBManager:
 
                         while time.monotonic() - verification_start < verify_timeout:
                             # Check if operation still exists
-                            current_ops = await self.get_operations()
-                            operation_exists = any(
-                                str(op["opid"]) == str(opid) for op in current_ops
-                            )
+                            operation_exists = self._operation_exists(opid)
 
                             if not operation_exists:
                                 logger.info(

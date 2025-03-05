@@ -1,17 +1,20 @@
+from pymongo.errors import PyMongoError
+
+
 # Custom exceptions
-class MongoOpsError(Exception):
-    """Base exception for Close MongoDB Operations Manager."""
+class MongoOpsError(PyMongoError):
+    """Base class for exceptions raised by the MongoOpsManager class."""
 
     pass
 
 
 class MongoConnectionError(MongoOpsError):
-    """Exception raised for connection-related errors."""
+    """Exception raised for MongoDB connection errors."""
 
     pass
 
 
-class OperationError(MongoOpsError):
+class OperationError(Exception):
     """Exception raised for operation-related errors."""
 
     pass

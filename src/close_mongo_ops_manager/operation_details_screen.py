@@ -41,7 +41,7 @@ class OperationDetailsScreen(ModalScreen):
     """
 
     BINDINGS = [
-        Binding("escape", "dismiss", "Operation Details", show=False),
+        Binding("escape", "dismiss", "Close", show=False),
     ]
 
     def __init__(self, operation: dict) -> None:
