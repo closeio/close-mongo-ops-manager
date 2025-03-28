@@ -211,19 +211,20 @@ class MongoDBManager:
 
         # Validate input parameters
         if max_retries < 1:
-            max_retries = 1
+            max_retries = max(1, max_retries)
 
         if verify_timeout < 1.0:
-            verify_timeout = 1.0
+            verify_timeout = max(1.0, verify_timeout)
 
         try:
             # Convert string opid to numeric if possible (for non-sharded operations)
-            numeric_opid = None
             if isinstance(opid, str) and ":" not in opid:
                 try:
                     numeric_opid = int(opid)
                 except ValueError:
-                    pass
+                    numeric_opid = None
+            else:
+                numeric_opid = None
 
             use_opid = numeric_opid if numeric_opid is not None else opid
 
@@ -239,7 +240,7 @@ class MongoDBManager:
 
                         while time.monotonic() - verification_start < verify_timeout:
                             # Check if operation still exists
-                            operation_exists = self._operation_exists(opid)
+                            operation_exists = await self._operation_exists(opid)
 
                             if not operation_exists:
                                 logger.info(
@@ -248,16 +249,15 @@ class MongoDBManager:
                                 return True
 
                             # Brief pause before next verification check
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(1.0)
 
                         # If we reach here, operation still exists after timeout
                         logger.warning(
                             f"Operation {opid} still exists after kill attempt {attempt + 1}"
                         )
-
                         if attempt < max_retries - 1:
-                            # Wait before retry, with exponential backoff
-                            await asyncio.sleep(2**attempt)
+                            # Wait before retry, with exponential backoff (capped at 10 seconds)
+                            await asyncio.sleep(min(2**attempt, 10))
                             continue
 
                 except PyMongoError as e:
@@ -286,7 +286,8 @@ class MongoDBManager:
 
                     # Log the error and continue retrying if attempts remain
                     logger.error(
-                        f"Attempt {attempt + 1} failed to kill operation {opid}: {e}"
+                        f"Attempt {attempt + 1} failed to kill operation {opid}: {e}",
+                        exc_info=True,
                     )
                     if attempt < max_retries - 1:
                         await asyncio.sleep(2**attempt)
