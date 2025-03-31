@@ -59,7 +59,7 @@ class MongoOpsManager(App):
 
     ENABLE_COMMAND_PALETTE = False
 
-    TITLE = "Close MongoDB Operations Manager"
+    TITLE = f"Close MongoDB Operations Manager v{version('close-mongo-ops-manager')}"
 
     AUTO_FOCUS = "OperationsView"
 
