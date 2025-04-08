@@ -51,7 +51,7 @@ class OperationsView(DataTable):
         self.selected_ops.clear()
         for idx, key in enumerate(self.rows.keys()):
             coord = Coordinate(idx, 0)
-            self.update_cell_at(coord, "☐")
+            self.update_cell_at(coord, " ")
 
     def on_key(self, event) -> None:
         if event.key == "enter":

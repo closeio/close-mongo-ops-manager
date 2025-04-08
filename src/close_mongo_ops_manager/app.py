@@ -262,7 +262,7 @@ class MongoOpsManager(App):
                 )
 
                 row = (
-                    "☐",
+                    " ",
                     str(op["opid"]),
                     op.get("type", ""),
                     op.get("op", ""),
@@ -323,7 +323,7 @@ class MongoOpsManager(App):
             row_key = str(getattr(key, "value", key))
             self.operations_view.selected_ops.add(row_key)
             coord = Coordinate(idx, 0)
-            self.operations_view.update_cell_at(coord, "☒")
+            self.operations_view.update_cell_at(coord, "✓")
 
         # Show notification
         count = len(self.operations_view.selected_ops)
@@ -341,10 +341,10 @@ class MongoOpsManager(App):
 
             if row_key in self.operations_view.selected_ops:
                 self.operations_view.selected_ops.remove(row_key)
-                self.operations_view.update_cell_at(coord, "☐")
+                self.operations_view.update_cell_at(coord, " ")
             else:
                 self.operations_view.selected_ops.add(row_key)
-                self.operations_view.update_cell_at(coord, "☒")
+                self.operations_view.update_cell_at(coord, "✓")
 
         except Exception as e:
             logger.error(f"Error handling row selection: {e}", exc_info=True)
