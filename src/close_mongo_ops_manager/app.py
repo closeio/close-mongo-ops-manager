@@ -84,8 +84,7 @@ class MongoOpsManager(App):
         Binding("ctrl+p", "toggle_refresh", "Pause/Resume"),
         Binding("ctrl+s", "sort_by_time", "Sort by Time"),
         Binding("ctrl+l", "show_logs", "View Logs"),
-        Binding("ctrl+u", "deselect_all", "Deselect All"),
-        Binding("ctrl+a", "select_all", "Select All"),
+        Binding("ctrl+a", "toggle_selection", "Toggle Selection"),
         Binding(
             "ctrl+equals_sign",
             "increase_refresh",
@@ -314,9 +313,6 @@ class MongoOpsManager(App):
         if not self.operations_view.selected_ops:
             return
 
-        # Remember selected ops before clearing
-        count = len(self.operations_view.selected_ops)
-
         # Clear the selected operations set
         self.operations_view.selected_ops.clear()
 
@@ -328,8 +324,14 @@ class MongoOpsManager(App):
 
         self.refresh_operations()
 
-        # Show notification
-        self.notify(f"Deselected {count} operations")
+    def action_toggle_selection(self) -> None:
+        """Toggle between selecting all operations and deselecting all operations."""
+        # If there are any selected operations, deselect them
+        if self.operations_view.selected_ops:
+            self.action_deselect_all()
+        else:
+            # Select all operations (default behavior)
+            self.action_select_all()
 
     def action_select_all(self) -> None:
         """Select all operations in the view."""
@@ -344,12 +346,8 @@ class MongoOpsManager(App):
             coord = Coordinate(idx, 0)
             self.operations_view.update_cell_at(coord, "✓")
 
-        # Show notification
-        count = len(self.operations_view.selected_ops)
-        if count > 0:
-            self.notify(f"Selected {count} operations")
-
         # Update StatusBar with selected count
+        count = len(self.operations_view.selected_ops)
         self._status_bar.set_selected_count(count)
 
         # Emit message about selection change
