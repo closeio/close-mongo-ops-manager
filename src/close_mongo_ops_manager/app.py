@@ -23,7 +23,11 @@ from close_mongo_ops_manager.filterbar import FilterBar
 from close_mongo_ops_manager.help_screen import HelpScreen
 from close_mongo_ops_manager.kill_confirmation_screen import KillConfirmation
 from close_mongo_ops_manager.log_screen import LogScreen
-from close_mongo_ops_manager.messages import FilterChanged, OperationsLoaded, SelectionChanged
+from close_mongo_ops_manager.messages import (
+    FilterChanged,
+    OperationsLoaded,
+    SelectionChanged,
+)
 from close_mongo_ops_manager.mongodb_manager import MongoDBManager
 from close_mongo_ops_manager.operations_view import OperationsView
 from close_mongo_ops_manager.statusbar import StatusBar
@@ -279,10 +283,18 @@ class MongoOpsManager(App):
             for op_id in selected_ops_before_refresh:
                 if op_id in current_op_ids:
                     self.operations_view.selected_ops.add(op_id)
-                    row_index = next((i for i, key in enumerate(self.operations_view.rows.keys())
-                                    if str(getattr(key, "value", key)) == op_id), None)
+                    row_index = next(
+                        (
+                            i
+                            for i, key in enumerate(self.operations_view.rows.keys())
+                            if str(getattr(key, "value", key)) == op_id
+                        ),
+                        None,
+                    )
                     if row_index is not None:
-                        self.operations_view.update_cell_at(Coordinate(row_index, 0), "✓")
+                        self.operations_view.update_cell_at(
+                            Coordinate(row_index, 0), "✓"
+                        )
 
             # Update status bar with selected operations count
             self._status_bar.set_selected_count(len(self.operations_view.selected_ops))
@@ -372,7 +384,9 @@ class MongoOpsManager(App):
             # Update StatusBar with selected count
             self._status_bar.set_selected_count(len(self.operations_view.selected_ops))
             # Emit message about selection change
-            self.operations_view.post_message(SelectionChanged(count=len(self.operations_view.selected_ops)))
+            self.operations_view.post_message(
+                SelectionChanged(count=len(self.operations_view.selected_ops))
+            )
 
         except Exception as e:
             logger.error(f"Error handling row selection: {e}", exc_info=True)

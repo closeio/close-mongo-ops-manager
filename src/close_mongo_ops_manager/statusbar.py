@@ -24,7 +24,9 @@ class StatusBar(Static):
         self._update_text()
 
     def _update_text(self) -> None:
-        selected_text = f" | Selected: {self._selected_count}" if self._selected_count > 0 else ""
+        selected_text = (
+            f" | Selected: {self._selected_count}" if self._selected_count > 0 else ""
+        )
         text = f"{self._connection_status} | {self._refresh_status} ({self._refresh_interval}){selected_text}"
         self.update(text)
 
