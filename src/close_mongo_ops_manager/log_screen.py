@@ -45,7 +45,7 @@ class LogScreen(ModalScreen):
         with Container(id="log-container"):
             with VerticalScroll(id="log-content") as vertical_scroll:
                 try:
-                    with open(self.log_file) as f:
+                    with open(self.log_file, 'r') as f:
                         content = f.read()
                     yield Static(content)
                 except Exception as e:

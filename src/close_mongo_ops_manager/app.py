@@ -149,7 +149,7 @@ class MongoOpsManager(App):
         self._status_bar = self.query_one(StatusBar)
         self.operations_view.loading = True
         self._status_bar.set_refresh_interval(self.refresh_interval)
-        asyncio.create_task(self._setup())
+        await self._setup()
 
     def action_show_help(self) -> None:
         """Show the help screen."""
@@ -233,7 +233,7 @@ class MongoOpsManager(App):
         selected_ops_before_refresh = self.operations_view.selected_ops.copy()
 
         # Clear selections for refresh
-        self.operations_view.selected_ops.clear()
+        self.operations_view.clear_selections()
 
         start_time = time.monotonic()
         try:
@@ -285,9 +285,11 @@ class MongoOpsManager(App):
 
             # Restore selected operations that still exist after refresh
             current_op_ids = {str(op["opid"]) for op in ops}
+            restored_selections = set()
+
             for op_id in selected_ops_before_refresh:
                 if op_id in current_op_ids:
-                    self.operations_view.selected_ops.add(op_id)
+                    restored_selections.add(op_id)
                     row_index = next(
                         (
                             i
@@ -300,6 +302,9 @@ class MongoOpsManager(App):
                         self.operations_view.update_cell_at(
                             Coordinate(row_index, 0), "✓"
                         )
+
+            # Update the selected_ops set with restored selections
+            self.operations_view.selected_ops = restored_selections
 
             # Update status bar with selected operations count
             self._status_bar.set_selected_count(len(self.operations_view.selected_ops))
@@ -332,6 +337,8 @@ class MongoOpsManager(App):
             filter_bar.remove_class("hidden")
         else:
             filter_bar.add_class("hidden")
+            # Return focus to operations view
+            self.operations_view.focus()
 
     def action_deselect_all(self) -> None:
         """Deselect all selected operations."""
@@ -378,8 +385,7 @@ class MongoOpsManager(App):
         # Emit message about selection change
         self.operations_view.post_message(SelectionChanged(count=count))
 
-    # FIXME: When refreshing the table after killing an operation
-    # the selected row is keep selected and the checkbox is not unchecked.
+    # Fix for the issue where row selection isn't properly cleared after killing operations
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection."""
         try:
@@ -503,6 +509,17 @@ class MongoOpsManager(App):
 
     async def on_unmount(self) -> None:
         """Clean up resources when the application exits."""
+        # Cancel the refresh task if it's running
+        if self._refresh_task and not self._refresh_task.done():
+            self._refresh_task.cancel()
+            try:
+                await self._refresh_task
+            except asyncio.CancelledError:
+                logger.info("Refresh task cancelled successfully")
+            except Exception as e:
+                logger.error(f"Error cancelling refresh task: {e}")
+
+        # Close MongoDB connections
         if self.mongodb:
             try:
                 await self.mongodb.close()

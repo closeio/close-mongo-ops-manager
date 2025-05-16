@@ -1,7 +1,6 @@
 import asyncio
 import time
 from typing import Any
-from collections.abc import Mapping
 
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
@@ -82,7 +81,7 @@ class MongoDBManager:
             pipeline = [{"$currentOp": current_op_args}]
 
             if filters or self.namespace:
-                match_stage: Mapping[str, Any] = {"$and": []}
+                match_stage: dict[str, Any] = {"$and": []}
 
                 # Add system operations filter
                 if self.hide_system_ops:
@@ -205,7 +204,7 @@ class MongoDBManager:
         self, opid: str, max_retries: int = 2, verify_timeout: float = 5.0
     ) -> bool:
         """Kill a MongoDB operation with retries and verification."""
-        if not opid:
+        if not opid or opid.strip() == "":
             logger.error("Cannot kill operation with empty opid")
             return False
 
