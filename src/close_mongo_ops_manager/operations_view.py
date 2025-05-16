@@ -2,6 +2,7 @@ from textual.binding import Binding
 from textual.widgets import DataTable
 from textual.coordinate import Coordinate
 
+from close_mongo_ops_manager.messages import SelectionChanged
 from close_mongo_ops_manager.operation_details_screen import OperationDetailsScreen
 
 
@@ -52,6 +53,8 @@ class OperationsView(DataTable):
         for idx, key in enumerate(self.rows.keys()):
             coord = Coordinate(idx, 0)
             self.update_cell_at(coord, " ")
+        # Emit message about selection change
+        self.post_message(SelectionChanged(count=0))
 
     def on_key(self, event) -> None:
         if event.key == "enter":

@@ -23,7 +23,7 @@ from close_mongo_ops_manager.filterbar import FilterBar
 from close_mongo_ops_manager.help_screen import HelpScreen
 from close_mongo_ops_manager.kill_confirmation_screen import KillConfirmation
 from close_mongo_ops_manager.log_screen import LogScreen
-from close_mongo_ops_manager.messages import FilterChanged, OperationsLoaded
+from close_mongo_ops_manager.messages import FilterChanged, OperationsLoaded, SelectionChanged
 from close_mongo_ops_manager.mongodb_manager import MongoDBManager
 from close_mongo_ops_manager.operations_view import OperationsView
 from close_mongo_ops_manager.statusbar import StatusBar
@@ -91,12 +91,14 @@ class MongoOpsManager(App):
             "increase_refresh",
             "Increase Refresh Interval",
             key_display="^+",
+            show=False,
         ),
         Binding(
             "ctrl+minus",
             "decrease_refresh",
             "Decrease Refresh Interval",
             key_display="^-",
+            show=False,
         ),
     ]
 
@@ -191,7 +193,6 @@ class MongoOpsManager(App):
         new_interval = MongoOpsManager.validate_refresh_interval(new_interval)
         if new_interval != self.refresh_interval:
             self.refresh_interval = new_interval
-            self.notify(f"Refresh interval increased to {self.refresh_interval}s")
             self._status_bar.set_refresh_interval(self.refresh_interval)
 
     def action_decrease_refresh(self) -> None:
@@ -200,7 +201,6 @@ class MongoOpsManager(App):
         new_interval = MongoOpsManager.validate_refresh_interval(new_interval)
         if new_interval != self.refresh_interval:
             self.refresh_interval = new_interval
-            self.notify(f"Refresh interval decreased to {self.refresh_interval}s")
             self._status_bar.set_refresh_interval(self.refresh_interval)
 
     async def auto_refreshing(self) -> None:
@@ -221,8 +221,10 @@ class MongoOpsManager(App):
             self.operations_view.loading = False
             return
 
-        # Clear selected operations before refreshing.
-        # This is needed to avoid issues with deselection after refreshing.
+        # Save current selected operations before refreshing
+        selected_ops_before_refresh = self.operations_view.selected_ops.copy()
+
+        # Clear selections for refresh
         self.operations_view.selected_ops.clear()
 
         start_time = time.monotonic()
@@ -273,6 +275,19 @@ class MongoOpsManager(App):
                 )
                 self.operations_view.add_row(*row, key=str(op["opid"]))
 
+            # Restore selected operations that still exist after refresh
+            current_op_ids = {str(op["opid"]) for op in ops}
+            for op_id in selected_ops_before_refresh:
+                if op_id in current_op_ids:
+                    self.operations_view.selected_ops.add(op_id)
+                    row_index = next((i for i, key in enumerate(self.operations_view.rows.keys())
+                                    if str(getattr(key, "value", key)) == op_id), None)
+                    if row_index is not None:
+                        self.operations_view.update_cell_at(Coordinate(row_index, 0), "✓")
+
+            # Update status bar with selected operations count
+            self._status_bar.set_selected_count(len(self.operations_view.selected_ops))
+
             # Calculate load duration and emit event
             duration = time.monotonic() - start_time
             self.operations_view.post_message(
@@ -293,8 +308,6 @@ class MongoOpsManager(App):
         """Toggle auto-refresh."""
         self.auto_refresh = not self.auto_refresh
         self._status_bar.set_refresh_status(self.auto_refresh)
-        status = "enabled" if self.auto_refresh else "paused"
-        self.notify(f"Auto-refresh {status}")
 
     def action_deselect_all(self) -> None:
         """Deselect all selected operations."""
@@ -306,6 +319,12 @@ class MongoOpsManager(App):
 
         # Clear the selected operations set
         self.operations_view.selected_ops.clear()
+
+        # Update StatusBar with selected count (zero)
+        self._status_bar.set_selected_count(0)
+
+        # Emit message about selection change
+        self.operations_view.post_message(SelectionChanged(count=0))
 
         self.refresh_operations()
 
@@ -330,6 +349,12 @@ class MongoOpsManager(App):
         if count > 0:
             self.notify(f"Selected {count} operations")
 
+        # Update StatusBar with selected count
+        self._status_bar.set_selected_count(count)
+
+        # Emit message about selection change
+        self.operations_view.post_message(SelectionChanged(count=count))
+
     # FIXME: When refreshing the table after killing an operation
     # the selected row is keep selected and the checkbox is not unchecked.
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -345,6 +370,11 @@ class MongoOpsManager(App):
             else:
                 self.operations_view.selected_ops.add(row_key)
                 self.operations_view.update_cell_at(coord, "✓")
+
+            # Update StatusBar with selected count
+            self._status_bar.set_selected_count(len(self.operations_view.selected_ops))
+            # Emit message about selection change
+            self.operations_view.post_message(SelectionChanged(count=len(self.operations_view.selected_ops)))
 
         except Exception as e:
             logger.error(f"Error handling row selection: {e}", exc_info=True)
@@ -441,6 +471,10 @@ class MongoOpsManager(App):
     def on_operations_loaded(self, event: OperationsLoaded) -> None:
         """Handle operations loaded event."""
         logger.info(f"Loaded {event.count} operations in {event.duration:.2f} seconds")
+
+    def on_selection_changed(self, event: SelectionChanged) -> None:
+        """Handle selection changed event."""
+        self._status_bar.set_selected_count(event.count)
 
     async def on_unmount(self) -> None:
         """Clean up resources when the application exits."""

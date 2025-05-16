@@ -20,10 +20,12 @@ class StatusBar(Static):
         self._connection_status = "Connecting..."
         self._refresh_status = "Auto-refresh paused"
         self._refresh_interval = f"{str(refresh_interval)}s"
+        self._selected_count = 0
         self._update_text()
 
     def _update_text(self) -> None:
-        text = f"{self._connection_status} | {self._refresh_status} ({self._refresh_interval})"
+        selected_text = f" | Selected: {self._selected_count}" if self._selected_count > 0 else ""
+        text = f"{self._connection_status} | {self._refresh_status} ({self._refresh_interval}){selected_text}"
         self.update(text)
 
     def set_connection_status(self, connected: bool, details: str = "") -> None:
@@ -40,4 +42,13 @@ class StatusBar(Static):
 
     def set_refresh_interval(self, interval: float) -> None:
         self._refresh_interval = f"{interval}s"
+        self._update_text()
+
+    def set_selected_count(self, count: int) -> None:
+        """Set the number of selected operations.
+
+        Args:
+            count: The number of selected operations.
+        """
+        self._selected_count = count
         self._update_text()

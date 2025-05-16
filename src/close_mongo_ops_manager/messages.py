@@ -16,3 +16,10 @@ class OperationsLoaded(Message):
 
     count: int
     duration: float
+
+
+@dataclass
+class SelectionChanged(Message):
+    """Event emitted when the selection of operations changes."""
+
+    count: int

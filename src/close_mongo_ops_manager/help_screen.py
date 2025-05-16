@@ -19,7 +19,7 @@ class HelpScreen(ModalScreen):
     #help-container {
         width: auto;
         height: auto;
-        max-width: 30%;
+        max-width: 50%;
         max-height: 80%;
         border: round $primary;
         background: $surface;
