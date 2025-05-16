@@ -1,5 +1,5 @@
 # close-mongo-ops-manager
-Monitor and kill MongoDB operations (Be advised that this is in a pre-alpha state. Use at your own risk.)
+Monitor and kill MongoDB operations (Be advised that this is in a Alpha state. You may encounter some bugs.)
 
 # Requirements
 
@@ -56,12 +56,11 @@ Ctrl+K  : Kill selected operations
 Ctrl+P  : Pause/Resume auto-refresh
 Ctrl+S  : Sort by running time
 Ctrl+L  : View application logs
-Ctrl+U  : Deselect all operations
-Ctrl+A  : Select all operations
+Ctrl+A  : Toggle selection (select all/deselect all)
 Ctrl++  : Increase refresh interval
 Ctrl+-  : Decrease refresh interval
 Enter   : See operation details
-Space   : Select operation
+Space   : Select operations
 ```
 
 The mouse is enabled, so all menus are clickable.
