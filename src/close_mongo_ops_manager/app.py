@@ -78,6 +78,10 @@ class MongoOpsManager(App):
         padding: 0;
         margin: 0;
     }
+
+    .hidden {
+        display: none;
+    }
     """
 
     BINDINGS = [
@@ -89,6 +93,7 @@ class MongoOpsManager(App):
         Binding("ctrl+s", "sort_by_time", "Sort by Time"),
         Binding("ctrl+l", "show_logs", "View Logs"),
         Binding("ctrl+a", "toggle_selection", "Toggle Selection"),
+        Binding("ctrl+f", "toggle_filter_bar", "Toggle Filters"),
         Binding(
             "ctrl+equals_sign",
             "increase_refresh",
@@ -133,7 +138,7 @@ class MongoOpsManager(App):
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
         yield Header()
-        yield FilterBar()
+        yield FilterBar(classes="hidden")  # Hide FilterBar by default
         with VerticalScroll(can_focus=False, can_focus_children=True):
             yield OperationsView()
         yield StatusBar(self.refresh_interval)
@@ -319,6 +324,14 @@ class MongoOpsManager(App):
         """Toggle auto-refresh."""
         self.auto_refresh = not self.auto_refresh
         self._status_bar.set_refresh_status(self.auto_refresh)
+
+    def action_toggle_filter_bar(self) -> None:
+        """Toggle filter bar visibility."""
+        filter_bar = self.query_one(FilterBar)
+        if "hidden" in filter_bar.classes:
+            filter_bar.remove_class("hidden")
+        else:
+            filter_bar.add_class("hidden")
 
     def action_deselect_all(self) -> None:
         """Deselect all selected operations."""
