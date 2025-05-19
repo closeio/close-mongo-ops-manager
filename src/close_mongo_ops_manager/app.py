@@ -13,7 +13,7 @@ from textual import work
 from textual.binding import Binding
 from textual.app import App, ComposeResult
 from textual.reactive import reactive
-from textual.widgets import DataTable, Footer, Header
+from textual.widgets import DataTable, Footer, Header, Input
 from textual.coordinate import Coordinate
 from textual.containers import VerticalScroll
 
@@ -337,18 +337,25 @@ class MongoOpsManager(App):
     def action_toggle_filter_bar(self) -> None:
         """Toggle filter bar visibility."""
         filter_bar = self.query_one(FilterBar)
+
+        # Use call_after_refresh to ensure UI updates properly
         if "hidden" in filter_bar.classes:
             # Show filter bar
             filter_bar.remove_class("hidden")
-            # Focus the first input
-            first_input = filter_bar.query(".filter-input").first()
-            if first_input:
-                self.call_after_refresh(first_input.focus)
+            # Focus the first input after refresh
+            self.call_after_refresh(lambda: self._focus_first_filter_input())
         else:
             # Hide filter bar
             filter_bar.add_class("hidden")
-            # Return focus to operations view
-            self.operations_view.focus()
+            # Return focus to operations view after refresh
+            self.call_after_refresh(self.operations_view.focus)
+
+    def _focus_first_filter_input(self) -> None:
+        """Helper to focus the first filter input."""
+        filter_bar = self.query_one(FilterBar)
+        first_input = filter_bar.query_one(".filter-input", expect_type=Input)
+        if first_input:
+            first_input.focus()
 
     def action_deselect_all(self) -> None:
         """Deselect all selected operations."""

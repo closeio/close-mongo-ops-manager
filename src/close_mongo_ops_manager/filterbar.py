@@ -14,6 +14,11 @@ class FilterBar(Horizontal):
 
     BORDER_SUBTITLE = "Filter operations by criteria"
 
+    # Define key bindings - will be used when the filter bar itself has focus
+    BINDINGS = [
+        ("ctrl+f", "toggle_filter_bar", "Toggle Filters"),
+    ]
+
     DEFAULT_CSS = """
     FilterBar {
         height: auto;
@@ -97,3 +102,23 @@ class FilterBar(Horizontal):
         # Make sure the current input keeps focus after any refresh operations
         # Use call_after_refresh to ensure it happens after any screen updates
         self.call_after_refresh(current_input.focus)
+
+    def action_toggle_filter_bar(self) -> None:
+        """Delegate to the parent app to toggle the filter bar."""
+        # The action gets bubbled up to the parent app which has the same action name
+        self.app.action_toggle_filter_bar()  # type: ignore # Pylance doesn't recognize the dynamic method
+
+    def on_key(self, event) -> None:
+        """Handle key events to make sure Ctrl+F works to toggle the filter bar."""
+        # Check if Ctrl+F is pressed
+        if event.key == "ctrl+f":
+            # Prevent the key event from being propagated
+            event.prevent_default()
+            event.stop()
+            # Call the toggle action on the app (our parent)
+            self.app.action_toggle_filter_bar()  # type: ignore # Pylance doesn't recognize the dynamic method
+
+    def on_mount(self) -> None:
+        """Setup event handling when the widget is mounted."""
+        # Capture key events from children (including inputs)
+        self.capture_keys = True
