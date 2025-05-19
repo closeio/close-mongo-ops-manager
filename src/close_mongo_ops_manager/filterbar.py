@@ -67,7 +67,6 @@ class FilterBar(Horizontal):
                     input.value = ""
             self.post_message(FilterChanged({}))
 
-
     def on_input_changed(self, event: Input.Changed) -> None:
         filters = {}
         for input in self.query(".filter-input"):
@@ -75,3 +74,4 @@ class FilterBar(Horizontal):
                 filter_key = input.id.replace("filter-", "").replace("-", "_")  # type: ignore
                 filters[filter_key] = input.value
         self.post_message(FilterChanged(filters))
+        event.input.focus()

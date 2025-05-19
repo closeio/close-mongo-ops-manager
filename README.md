@@ -57,6 +57,7 @@ Ctrl+P  : Pause/Resume auto-refresh
 Ctrl+S  : Sort by running time
 Ctrl+L  : View application logs
 Ctrl+A  : Toggle selection (select all/deselect all)
+Ctrl+F  : Toggle filter bar visibility
 Ctrl++  : Increase refresh interval
 Ctrl+-  : Decrease refresh interval
 Enter   : See operation details

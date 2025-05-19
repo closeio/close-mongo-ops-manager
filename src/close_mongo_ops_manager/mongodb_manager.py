@@ -196,8 +196,11 @@ class MongoDBManager:
             result = await self.admin_db.aggregate(pipeline)
             result_list = await result.to_list(1)
             return len(result_list) > 0  # Operation exists if result is not empty
-        except Exception as e:
+        except PyMongoError as e:
             logger.warning(f"Error checking operation existence: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error checking operation: {e}", exc_info=True)
             return False
 
     async def kill_operation(

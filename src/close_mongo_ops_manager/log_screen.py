@@ -40,16 +40,23 @@ class LogScreen(ModalScreen):
         super().__init__()
         self.log_file = log_file
 
+    async def on_mount(self) -> None:
+        """Load log file asynchronously."""
+        try:
+            with open(self.log_file) as f:
+                content = f.read()
+            log_content = self.query_one("#log-content")
+            log_content.mount(Static(content))
+        except Exception as e:
+            log_content = self.query_one("#log-content")
+            log_content.mount(Static(f"Error reading log file: {e}"))
+
     def compose(self) -> ComposeResult:
         yield Footer()
         with Container(id="log-container"):
             with VerticalScroll(id="log-content") as vertical_scroll:
-                try:
-                    with open(self.log_file, 'r') as f:
-                        content = f.read()
-                    yield Static(content)
-                except Exception as e:
-                    yield Static(f"Error reading log file: {e}")
+                # Content will be loaded in on_mount
+                pass
 
             vertical_scroll.border_title = "Application Logs"
             vertical_scroll.border_subtitle = "ESCAPE to dismiss"

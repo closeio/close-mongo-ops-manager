@@ -65,7 +65,8 @@ class MongoOpsManager(App):
 
     TITLE = f"Close MongoDB Operations Manager v{version('close-mongo-ops-manager')}"
 
-    AUTO_FOCUS = "OperationsView"
+    # Explicitly set initial focus to operations view
+    AUTO_FOCUS = None  # Disable auto-focus and handle it in on_mount
 
     CSS = """
     MongoOpsManager {
@@ -149,6 +150,8 @@ class MongoOpsManager(App):
         self._status_bar = self.query_one(StatusBar)
         self.operations_view.loading = True
         self._status_bar.set_refresh_interval(self.refresh_interval)
+        # Ensure operations view has focus when app loads
+        # self.operations_view.focus()
         await self._setup()
 
     def action_show_help(self) -> None:
@@ -190,6 +193,9 @@ class MongoOpsManager(App):
 
             self.refresh_operations()
             self._refresh_task = asyncio.create_task(self.auto_refreshing())
+
+            # Ensure operations view has focus after setup
+            # self.operations_view.focus()
         except Exception as e:
             logger.error(f"Setup error: {e}", exc_info=True)
             self._status_bar.set_connection_status(False)
@@ -284,24 +290,16 @@ class MongoOpsManager(App):
                 self.operations_view.add_row(*row, key=str(op["opid"]))
 
             # Restore selected operations that still exist after refresh
-            current_op_ids = {str(op["opid"]) for op in ops}
             restored_selections = set()
 
-            for op_id in selected_ops_before_refresh:
-                if op_id in current_op_ids:
-                    restored_selections.add(op_id)
-                    row_index = next(
-                        (
-                            i
-                            for i, key in enumerate(self.operations_view.rows.keys())
-                            if str(getattr(key, "value", key)) == op_id
-                        ),
-                        None,
-                    )
-                    if row_index is not None:
-                        self.operations_view.update_cell_at(
-                            Coordinate(row_index, 0), "✓"
-                        )
+            if selected_ops_before_refresh:
+                for i, op in enumerate(ops):
+                    op_id = str(op["opid"])
+                    if op_id in selected_ops_before_refresh:
+                        restored_selections.add(op_id)
+                        self.operations_view.update_cell_at(Coordinate(i, 0), "✓")
+
+                self.operations_view.selected_ops = restored_selections
 
             # Update the selected_ops set with restored selections
             self.operations_view.selected_ops = restored_selections
@@ -314,6 +312,9 @@ class MongoOpsManager(App):
             self.operations_view.post_message(
                 OperationsLoaded(count=len(ops), duration=duration)
             )
+
+            # Make sure operations view is focused after loading
+            # self.operations_view.focus()
 
         except Exception as e:
             self.notify(f"Failed to refresh: {e}", severity="error")
@@ -487,6 +488,8 @@ class MongoOpsManager(App):
         """Handle filter changes."""
         self.operations_view.filters = event.filters
         self.refresh_operations()
+        # Return focus to operations view after filtering
+        self.operations_view.focus()
 
     def action_sort_by_time(self) -> None:
         """Sort operations by running time."""
@@ -510,7 +513,11 @@ class MongoOpsManager(App):
     async def on_unmount(self) -> None:
         """Clean up resources when the application exits."""
         # Cancel the refresh task if it's running
-        if self._refresh_task and not self._refresh_task.done():
+        if (
+            hasattr(self, "_refresh_task")
+            and self._refresh_task
+            and not self._refresh_task.done()
+        ):
             self._refresh_task.cancel()
             try:
                 await self._refresh_task
@@ -520,7 +527,7 @@ class MongoOpsManager(App):
                 logger.error(f"Error cancelling refresh task: {e}")
 
         # Close MongoDB connections
-        if self.mongodb:
+        if hasattr(self, "mongodb") and self.mongodb:
             try:
                 await self.mongodb.close()
             except Exception as e:

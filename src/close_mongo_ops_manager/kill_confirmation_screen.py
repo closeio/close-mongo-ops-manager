@@ -70,8 +70,13 @@ class KillConfirmation(ModalScreen[bool]):
         self.dismiss(event.button.id == "yes")
 
     def on_key(self, event) -> None:
-        match event.key:
-            case "escape":
-                self.dismiss(False)
-            case "enter" if self.query_one("#yes").has_focus:
-                self.dismiss(True)
+        try:
+            match event.key:
+                case "escape":
+                    self.dismiss(False)
+                case "enter" if self.query_one("#yes").has_focus:
+                    self.dismiss(True)
+        except Exception as e:
+            # Log the error but still try to dismiss the screen
+            self.app.notify(f"Error processing key: {e}", severity="error")
+            self.dismiss(False)

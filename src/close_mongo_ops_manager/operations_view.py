@@ -47,6 +47,8 @@ class OperationsView(DataTable):
             "Description",
             "Effective Users",
         )
+        # Explicitly focus this widget on mount
+        # self.focus()
 
     def clear_selections(self) -> None:
         self.selected_ops.clear()
@@ -59,9 +61,11 @@ class OperationsView(DataTable):
     def on_key(self, event) -> None:
         if event.key == "enter":
             # Get the current row's operation data
-            if (self.cursor_row is not None and
-                self.current_ops and
-                0 <= self.cursor_row < len(self.current_ops)):
+            if (
+                self.cursor_row is not None
+                and self.current_ops
+                and 0 <= self.cursor_row < len(self.current_ops)
+            ):
                 op = self.current_ops[self.cursor_row]
                 self.show_operation_details(op)
 
