@@ -151,7 +151,7 @@ class MongoOpsManager(App):
         self.operations_view.loading = True
         self._status_bar.set_refresh_interval(self.refresh_interval)
         # Ensure operations view has focus when app loads
-        # self.operations_view.focus()
+        self.operations_view.focus()
         await self._setup()
 
     def action_show_help(self) -> None:
@@ -195,7 +195,7 @@ class MongoOpsManager(App):
             self._refresh_task = asyncio.create_task(self.auto_refreshing())
 
             # Ensure operations view has focus after setup
-            # self.operations_view.focus()
+            self.operations_view.focus()
         except Exception as e:
             logger.error(f"Setup error: {e}", exc_info=True)
             self._status_bar.set_connection_status(False)
@@ -313,8 +313,11 @@ class MongoOpsManager(App):
                 OperationsLoaded(count=len(ops), duration=duration)
             )
 
-            # Make sure operations view is focused after loading
-            # self.operations_view.focus()
+            # Only focus operations view if a filter input doesn't have focus
+            filter_inputs = self.query(".filter-input")
+            has_focus_input = any(input_widget.has_focus for input_widget in filter_inputs)
+            if not has_focus_input:
+                self.operations_view.focus()
 
         except Exception as e:
             self.notify(f"Failed to refresh: {e}", severity="error")
@@ -335,8 +338,14 @@ class MongoOpsManager(App):
         """Toggle filter bar visibility."""
         filter_bar = self.query_one(FilterBar)
         if "hidden" in filter_bar.classes:
+            # Show filter bar
             filter_bar.remove_class("hidden")
+            # Focus the first input
+            first_input = filter_bar.query(".filter-input").first()
+            if first_input:
+                self.call_after_refresh(first_input.focus)
         else:
+            # Hide filter bar
             filter_bar.add_class("hidden")
             # Return focus to operations view
             self.operations_view.focus()
@@ -488,8 +497,6 @@ class MongoOpsManager(App):
         """Handle filter changes."""
         self.operations_view.filters = event.filters
         self.refresh_operations()
-        # Return focus to operations view after filtering
-        self.operations_view.focus()
 
     def action_sort_by_time(self) -> None:
         """Sort operations by running time."""

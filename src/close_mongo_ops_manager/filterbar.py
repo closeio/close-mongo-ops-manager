@@ -62,16 +62,38 @@ class FilterBar(Horizontal):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "clear-filters":
-            for input in self.query(".filter-input"):
+            # Find the first input
+            first_input = None
+            inputs = self.query(".filter-input")
+            if inputs:
+                first_input = inputs.first()
+
+            # Clear all inputs
+            for input in inputs:
                 if isinstance(input, Input):
                     input.value = ""
+
+            # Send filter change message
             self.post_message(FilterChanged({}))
 
+            # Focus the first input after clearing
+            if first_input:
+                self.call_after_refresh(first_input.focus)
+
     def on_input_changed(self, event: Input.Changed) -> None:
+        # Get the currently focused input
+        current_input = event.input
+
+        # Collect all non-empty filters
         filters = {}
         for input in self.query(".filter-input"):
             if isinstance(input, Input) and input.value:
                 filter_key = input.id.replace("filter-", "").replace("-", "_")  # type: ignore
                 filters[filter_key] = input.value
+
+        # Send the filter changed message with current filters
         self.post_message(FilterChanged(filters))
-        event.input.focus()
+
+        # Make sure the current input keeps focus after any refresh operations
+        # Use call_after_refresh to ensure it happens after any screen updates
+        self.call_after_refresh(current_input.focus)

@@ -48,7 +48,7 @@ class OperationsView(DataTable):
             "Effective Users",
         )
         # Explicitly focus this widget on mount
-        # self.focus()
+        self.focus()
 
     def clear_selections(self) -> None:
         self.selected_ops.clear()
