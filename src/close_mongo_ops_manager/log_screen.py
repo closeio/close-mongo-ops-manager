@@ -10,6 +10,9 @@ from textual.widgets import Footer, Static
 
 class LogScreen(ModalScreen):
     """Screen for viewing application logs."""
+    
+    BORDER_TITLE = "Application Logs"
+    BORDER_SUBTITLE = "ESCAPE to dismiss"
 
     DEFAULT_CSS = """
     LogScreen {
@@ -26,8 +29,8 @@ class LogScreen(ModalScreen):
     }
 
     #log-content {
-        width: 80%;
-        height: 80%;
+        width: 100%;
+        height: 100%;
         padding: 1;
     }
     """
@@ -53,10 +56,11 @@ class LogScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         yield Footer()
-        with Container(id="log-container"):
-            with VerticalScroll(id="log-content") as vertical_scroll:
-                # Content will be loaded in on_mount
-                pass
-
-            vertical_scroll.border_title = "Application Logs"
-            vertical_scroll.border_subtitle = "ESCAPE to dismiss"
+        container = Container(id="log-container")
+        container.border_title = "Application Logs"
+        container.border_subtitle = "ESCAPE to dismiss"
+        
+        with container:
+            # We'll use the VerticalScroll widget with an ID for the content
+            scroll = VerticalScroll(id="log-content")
+            yield scroll
