@@ -164,9 +164,9 @@ class MongoOpsManager(App):
         """Show the log viewer screen."""
         self.push_screen(LogScreen(self.log_file))
 
-    def _start_connection(self) -> None:
+    async def _start_connection(self) -> None:
         """Start the MongoDB connection process after UI is ready."""
-        asyncio.create_task(self._setup())
+        await self._setup()
 
     async def _setup(self) -> None:
         """Initialize MongoDB connection and start operation monitoring."""
