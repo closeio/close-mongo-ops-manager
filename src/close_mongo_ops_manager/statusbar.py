@@ -31,9 +31,10 @@ class StatusBar(Static):
         self.update(text)
 
     def set_connection_status(self, connected: bool, details: str = "") -> None:
-        self._connection_status = (
-            f"Connected to {details}" if connected else "Disconnected"
-        )
+        if connected:
+            self._connection_status = f"Connected to {details}"
+        else:
+            self._connection_status = details if details else "Disconnected"
         self._update_text()
 
     def set_refresh_status(self, enabled: bool) -> None:

@@ -150,9 +150,11 @@ class MongoOpsManager(App):
         self._status_bar = self.query_one(StatusBar)
         self.operations_view.loading = True
         self._status_bar.set_refresh_interval(self.refresh_interval)
+        self._status_bar.set_connection_status(False, "Connecting...")
         # Ensure operations view has focus when app loads
         self.operations_view.focus()
-        await self._setup()
+        # Defer MongoDB connection to ensure UI is fully rendered first
+        self.call_after_refresh(self._start_connection)
 
     def action_show_help(self) -> None:
         """Show the help screen."""
@@ -161,6 +163,10 @@ class MongoOpsManager(App):
     def action_show_logs(self) -> None:
         """Show the log viewer screen."""
         self.push_screen(LogScreen(self.log_file))
+
+    def _start_connection(self) -> None:
+        """Start the MongoDB connection process after UI is ready."""
+        asyncio.create_task(self._setup())
 
     async def _setup(self) -> None:
         """Initialize MongoDB connection and start operation monitoring."""
