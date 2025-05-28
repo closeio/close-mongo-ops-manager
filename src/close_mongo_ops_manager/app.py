@@ -127,7 +127,7 @@ class MongoOpsManager(App):
         self.mongodb: MongoDBManager | None = None
         self._refresh_task: asyncio.Task | None = None
         self.log_file = LOG_FILE
-        self._status_bar: StatusBar
+        self._status_bar: StatusBar | None = None
         self.namespace: str = namespace
         self.hide_system_ops = hide_system_ops
 
@@ -189,7 +189,8 @@ class MongoOpsManager(App):
                 # Use a generic connection success message
                 host_info = "MongoDB server"
 
-            self._status_bar.set_connection_status(True, host_info)
+            if self._status_bar:
+                self._status_bar.set_connection_status(True, host_info)
 
             self.refresh_operations()
             self._refresh_task = asyncio.create_task(self.auto_refreshing())
@@ -198,7 +199,8 @@ class MongoOpsManager(App):
             self.operations_view.focus()
         except Exception as e:
             logger.error(f"Setup error: {e}", exc_info=True)
-            self._status_bar.set_connection_status(False)
+            if self._status_bar:
+                self._status_bar.set_connection_status(False)
             self.notify(f"Failed to connect: {e}", severity="error")
 
     def action_increase_refresh(self) -> None:
@@ -224,6 +226,9 @@ class MongoOpsManager(App):
                 if self.auto_refresh:
                     self.refresh_operations()
                 await asyncio.sleep(self.refresh_interval)
+            except asyncio.CancelledError:
+                # Re-raise CancelledError to allow proper task cancellation
+                raise
             except Exception as e:
                 logger.error(f"Auto-refresh error: {e}", exc_info=True)
                 await asyncio.sleep(self.refresh_interval)
@@ -438,62 +443,66 @@ class MongoOpsManager(App):
             if not confirmed or not self.mongodb:
                 return
 
-            # Get operation details before killing
-            current_ops = await self.mongodb.get_operations()
-            selected_ops = [
-                op
-                for op in current_ops
-                if str(op["opid"]) in self.operations_view.selected_ops
-            ]
+            try:
+                # Get operation details before killing
+                current_ops = await self.mongodb.get_operations()
+                selected_ops = [
+                    op
+                    for op in current_ops
+                    if str(op["opid"]) in self.operations_view.selected_ops
+                ]
 
-            for op in selected_ops:
-                command = op.get("command", {})
-                query_info = {
-                    "find": command.get("find"),
-                    "filter": command.get("filter"),
-                    "ns": op.get("ns"),
-                    "client": op.get("client"),
-                }
-                logger.info(
-                    f"Preparing to kill operation {op['opid']}. Query details: {query_info}"
-                )
-
-            success_count = 0
-            error_count = 0
-
-            for opid in list(self.operations_view.selected_ops):
-                try:
-                    if await self.mongodb.kill_operation(opid):
-                        success_count += 1
-                    else:
-                        error_count += 1
-                        logger.error(
-                            f"Failed to kill operation {opid}: Operation not found"
-                        )
-                except Exception as e:
-                    error_count += 1
-                    self.notify(
-                        f"Failed to kill operation {opid}: {str(e)}", severity="error"
+                for op in selected_ops:
+                    command = op.get("command", {})
+                    query_info = {
+                        "find": command.get("find"),
+                        "filter": command.get("filter"),
+                        "ns": op.get("ns"),
+                        "client": op.get("client"),
+                    }
+                    logger.info(
+                        f"Preparing to kill operation {op['opid']}. Query details: {query_info}"
                     )
-                    logger.error(f"Failed to kill operation {opid}: {e}", exc_info=True)
 
-            # Clear selections after all operations are processed
-            self.operations_view.clear_selections()
-            self.operations_view.selected_ops.clear()
+                success_count = 0
+                error_count = 0
 
-            # Refresh the view
-            self.refresh_operations()
+                for opid in list(self.operations_view.selected_ops):
+                    try:
+                        if await self.mongodb.kill_operation(opid):
+                            success_count += 1
+                        else:
+                            error_count += 1
+                            logger.error(
+                                f"Failed to kill operation {opid}: Operation not found"
+                            )
+                    except Exception as e:
+                        error_count += 1
+                        self.notify(
+                            f"Failed to kill operation {opid}: {str(e)}", severity="error"
+                        )
+                        logger.error(f"Failed to kill operation {opid}: {e}", exc_info=True)
 
-            # Show summary
-            if success_count > 0:
-                self.notify(
-                    f"Successfully killed {success_count} operation(s)",
-                    severity="information",
-                )
-            if error_count > 0:
-                self.notify(
-                    f"Failed to kill {error_count} operation(s)", severity="error"
-                )
+                # Clear selections after all operations are processed
+                self.operations_view.clear_selections()
+                self.operations_view.selected_ops.clear()
+
+                # Refresh the view
+                self.refresh_operations()
+
+                # Show summary
+                if success_count > 0:
+                    self.notify(
+                        f"Successfully killed {success_count} operation(s)",
+                        severity="information",
+                    )
+                if error_count > 0:
+                    self.notify(
+                        f"Failed to kill {error_count} operation(s)", severity="error"
+                    )
+            except Exception as e:
+                logger.error(f"Error in kill operation handler: {e}", exc_info=True)
+                self.notify(f"Error processing operations: {e}", severity="error")
 
         await self.push_screen(
             KillConfirmation(list(self.operations_view.selected_ops)),

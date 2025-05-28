@@ -17,8 +17,8 @@ class MongoDBManager:
     """Handles MongoDB connection and operations."""
 
     def __init__(self) -> None:
-        self.client: AsyncMongoClient = AsyncMongoClient()
-        self.admin_db: AsyncDatabase
+        self.client: AsyncMongoClient | None = None
+        self.admin_db: AsyncDatabase | None = None
         self.namespace: str = ""
         self.hide_system_ops: bool = True
 
