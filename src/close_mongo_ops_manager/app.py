@@ -169,25 +169,31 @@ class MongoOpsManager(App):
                 self.connection_string, self.namespace, self.hide_system_ops
             )
             # Extract connection details for status bar
-            parsed_uri = parse_uri(self.connection_string)
-
-            # Safely extract host information with fallbacks
-            host_info = "unknown host"
+            host_info = "MongoDB server"
             try:
+                parsed_uri = parse_uri(self.connection_string)
+
+                # Safely extract host information with fallbacks
                 nodelist = parsed_uri.get("nodelist")
                 if nodelist and len(nodelist) > 0:
                     host, port = nodelist[0]
                     host_info = f"{host}:{port}"
                 else:
                     # Fallback: try to extract from connection string directly
-                    cleaned_uri = self.connection_string.split("@")[-1].split("/")[0]
-                    host_info = cleaned_uri.split("?")[
-                        0
-                    ]  # Remove query parameters if present
+                    if "@" in self.connection_string:
+                        cleaned_uri = self.connection_string.split("@")[-1].split("/")[
+                            0
+                        ]
+                    else:
+                        cleaned_uri = self.connection_string.replace(
+                            "mongodb://", ""
+                        ).split("/")[0]
+
+                    # Remove query parameters if present
+                    host_info = cleaned_uri.split("?")[0]
             except Exception as parse_error:
                 logger.warning(f"Failed to parse host details: {parse_error}")
-                # Use a generic connection success message
-                host_info = "MongoDB server"
+                # Keep default "MongoDB server" as host_info
 
             if self._status_bar:
                 self._status_bar.set_connection_status(True, host_info)
@@ -223,14 +229,16 @@ class MongoOpsManager(App):
         """Background task for auto-refreshing functionality."""
         while True:
             try:
-                if self.auto_refresh:
+                if self.auto_refresh and self.mongodb:
                     self.refresh_operations()
                 await asyncio.sleep(self.refresh_interval)
             except asyncio.CancelledError:
                 # Re-raise CancelledError to allow proper task cancellation
+                logger.info("Auto-refresh task cancelled")
                 raise
             except Exception as e:
                 logger.error(f"Auto-refresh error: {e}", exc_info=True)
+                # Continue running but wait before retry
                 await asyncio.sleep(self.refresh_interval)
 
     @work(exclusive=True)
@@ -242,9 +250,6 @@ class MongoOpsManager(App):
 
         # Save current selected operations before refreshing
         selected_ops_before_refresh = self.operations_view.selected_ops.copy()
-
-        # Clear selections for refresh
-        self.operations_view.clear_selections()
 
         start_time = time.monotonic()
         try:
@@ -265,11 +270,18 @@ class MongoOpsManager(App):
                 )
 
             for op in ops:
+                # Skip operations without opid
+                if not op or "opid" not in op:
+                    logger.warning("Skipping operation without opid")
+                    continue
+
                 # Get client info
                 client_info = op.get("client_s") or op.get("client", "N/A")
                 client_metadata = op.get("clientMetadata", {})
-                mongos_info = client_metadata.get("mongos", {})
-                mongos_host = mongos_info.get("host", "")
+                mongos_info = (
+                    client_metadata.get("mongos", {}) if client_metadata else {}
+                )
+                mongos_host = mongos_info.get("host", "") if mongos_info else ""
 
                 if mongos_host:
                     client_info = f"{client_info} ({mongos_host.split('.', 1)[0]})"
@@ -277,7 +289,7 @@ class MongoOpsManager(App):
                 # Get effective users
                 effective_users = op.get("effectiveUsers", [])
                 users_str = (
-                    ", ".join(u.get("user", "") for u in effective_users)
+                    ", ".join(u.get("user", "") for u in effective_users if u)
                     if effective_users
                     else "N/A"
                 )
@@ -299,6 +311,8 @@ class MongoOpsManager(App):
 
             if selected_ops_before_refresh:
                 for i, op in enumerate(ops):
+                    if not op or "opid" not in op:
+                        continue
                     op_id = str(op["opid"])
                     if op_id in selected_ops_before_refresh:
                         restored_selections.add(op_id)
@@ -320,11 +334,14 @@ class MongoOpsManager(App):
 
             # Only focus operations view if a filter input doesn't have focus
             filter_inputs = self.query(".filter-input")
-            has_focus_input = any(input_widget.has_focus for input_widget in filter_inputs)
+            has_focus_input = any(
+                input_widget.has_focus for input_widget in filter_inputs
+            )
             if not has_focus_input:
                 self.operations_view.focus()
 
         except Exception as e:
+            logger.error(f"Failed to refresh operations: {e}", exc_info=True)
             self.notify(f"Failed to refresh: {e}", severity="error")
 
         finally:
@@ -353,7 +370,9 @@ class MongoOpsManager(App):
             # Hide filter bar
             filter_bar.add_class("hidden")
             # Return focus to operations view after refresh
-            self.call_after_refresh(self.operations_view.focus)
+            # Ensure operations view is actually focusable
+            if self.operations_view and not self.operations_view.loading:
+                self.call_after_refresh(self.operations_view.focus)
 
     def _focus_first_filter_input(self) -> None:
         """Helper to focus the first filter input."""
@@ -479,13 +498,18 @@ class MongoOpsManager(App):
                     except Exception as e:
                         error_count += 1
                         self.notify(
-                            f"Failed to kill operation {opid}: {str(e)}", severity="error"
+                            f"Failed to kill operation {opid}: {str(e)}",
+                            severity="error",
                         )
-                        logger.error(f"Failed to kill operation {opid}: {e}", exc_info=True)
+                        logger.error(
+                            f"Failed to kill operation {opid}: {e}", exc_info=True
+                        )
 
                 # Clear selections after all operations are processed
                 self.operations_view.clear_selections()
-                self.operations_view.selected_ops.clear()
+
+                # Force update the status bar immediately
+                self._status_bar.set_selected_count(0)
 
                 # Refresh the view
                 self.refresh_operations()

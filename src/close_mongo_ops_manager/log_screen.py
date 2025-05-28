@@ -10,7 +10,7 @@ from textual.widgets import Footer, Static
 
 class LogScreen(ModalScreen):
     """Screen for viewing application logs."""
-    
+
     BORDER_TITLE = "Application Logs"
     BORDER_SUBTITLE = "ESCAPE to dismiss"
 
@@ -59,7 +59,7 @@ class LogScreen(ModalScreen):
         container = Container(id="log-container")
         container.border_title = "Application Logs"
         container.border_subtitle = "ESCAPE to dismiss"
-        
+
         with container:
             # We'll use the VerticalScroll widget with an ID for the content
             scroll = VerticalScroll(id="log-content")

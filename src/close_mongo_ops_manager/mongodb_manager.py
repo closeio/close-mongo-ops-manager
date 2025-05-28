@@ -27,7 +27,7 @@ class MongoDBManager:
         logger.info("Closing MongoDB connections")
 
         try:
-            if self.client:
+            if self.client is not None:
                 await self.client.close()
                 logger.debug("Closed main MongoDB connection")
         except Exception as e:
@@ -67,6 +67,10 @@ class MongoDBManager:
 
     async def get_operations(self, filters: dict[str, str] | None = None) -> list[dict]:
         """Get current operations with appropriate handling"""
+        if self.admin_db is None:
+            logger.error("Admin database not initialized")
+            return []
+
         try:
             # Base currentOp arguments
             current_op_args = {
@@ -211,6 +215,10 @@ class MongoDBManager:
             logger.error("Cannot kill operation with empty opid")
             return False
 
+        if self.admin_db is None:
+            logger.error("Admin database not initialized")
+            return False
+
         # Validate input parameters
         if max_retries < 1:
             max_retries = max(1, max_retries)
@@ -220,15 +228,17 @@ class MongoDBManager:
 
         try:
             # Convert string opid to numeric if possible (for non-sharded operations)
-            if isinstance(opid, str) and ":" not in opid:
-                try:
-                    numeric_opid = int(opid)
-                except ValueError:
-                    numeric_opid = None
-            else:
-                numeric_opid = None
-
-            use_opid = numeric_opid if numeric_opid is not None else opid
+            use_opid = opid
+            if isinstance(opid, str):
+                opid = opid.strip()
+                if ":" not in opid and opid.isdigit():
+                    try:
+                        numeric_opid = int(opid)
+                        if numeric_opid > 0:  # Ensure it's a valid positive number
+                            use_opid = numeric_opid
+                    except (ValueError, OverflowError) as e:
+                        logger.warning(f"Failed to convert opid to numeric: {e}")
+                        use_opid = opid
 
             # Try killing the operation with retries
             for attempt in range(max_retries):
