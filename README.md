@@ -1,6 +1,8 @@
 # close-mongo-ops-manager
 Monitor and kill MongoDB operations (Be advised that this is in a Alpha state. You may encounter some bugs.)
 
+The app is published in [pypi](https://pypi.org/project/close-mongo-ops-manager/)
+
 # Requirements
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/#installing-uv)
