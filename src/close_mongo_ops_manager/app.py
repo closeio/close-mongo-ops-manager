@@ -341,7 +341,9 @@ class MongoOpsManager(App):
 
             # Restore selected operations
             self.operations_view.selected_ops = {
-                op_id for op_id in selected_ops_before_refresh if op_id in current_op_ids
+                op_id
+                for op_id in selected_ops_before_refresh
+                if op_id in current_op_ids
             }
 
             # Update status bar with selected operations count

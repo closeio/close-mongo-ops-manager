@@ -181,33 +181,35 @@ class MongoDBManager:
                     pipeline.append({"$match": match_stage})
 
             # Project only the fields we need to reduce data transfer
-            pipeline.append({
-                "$project": {
-                    "opid": 1,
-                    "type": 1,
-                    "op": 1,
-                    "secs_running": 1,
-                    "client": 1,
-                    "client_s": 1,
-                    "clientMetadata.mongos.host": 1,
-                    "desc": 1,
-                    "effectiveUsers": 1,
-                    "active": 1,
-                    "ns": 1,
-                    "command": 1,
-                    "planSummary": 1,
-                    "currentOpTime": 1,
-                    "microsecs_running": 1,
-                    "killPending": 1,
-                    "WiredTigerTxn": 1,
-                    "lsid": 1,
-                    "transaction": 1,
-                    "locks": 1,
-                    "waitingForLock": 1,
-                    "lockStats": 1
+            pipeline.append(
+                {
+                    "$project": {
+                        "opid": 1,
+                        "type": 1,
+                        "op": 1,
+                        "secs_running": 1,
+                        "client": 1,
+                        "client_s": 1,
+                        "clientMetadata.mongos.host": 1,
+                        "desc": 1,
+                        "effectiveUsers": 1,
+                        "active": 1,
+                        "ns": 1,
+                        "command": 1,
+                        "planSummary": 1,
+                        "currentOpTime": 1,
+                        "microsecs_running": 1,
+                        "killPending": 1,
+                        "WiredTigerTxn": 1,
+                        "lsid": 1,
+                        "transaction": 1,
+                        "locks": 1,
+                        "waitingForLock": 1,
+                        "lockStats": 1,
+                    }
                 }
-            })
-            
+            )
+
             # Limit results to prevent overwhelming the UI
             pipeline.append({"$limit": 1000})
 

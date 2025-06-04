@@ -6,6 +6,7 @@ from textual.containers import (
 )
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Static
+from textual.timer import Timer
 
 
 class LogScreen(ModalScreen):
@@ -42,17 +43,42 @@ class LogScreen(ModalScreen):
     def __init__(self, log_file: str) -> None:
         super().__init__()
         self.log_file = log_file
+        self.update_timer: Timer | None = None
+        self.last_position = 0
 
     async def on_mount(self) -> None:
-        """Load log file asynchronously."""
+        """Load log file asynchronously and start auto-refresh."""
+        await self.update_log_content()
+        # Start periodic updates every 0.5 seconds
+        self.update_timer = self.set_interval(0.5, self.update_log_content)
+
+    async def update_log_content(self) -> None:
+        """Read and update the log file content."""
         try:
             with open(self.log_file) as f:
                 content = f.read()
-            log_content = self.query_one("#log-content")
-            log_content.mount(Static(content))
+
+            log_content = self.query_one("#log-content", VerticalScroll)
+
+            # Clear existing content
+            await log_content.remove_children()
+
+            # Add new content
+            await log_content.mount(Static(content))
+
+            # Auto-scroll to bottom if we're near the bottom
+            if log_content.scroll_y >= log_content.max_scroll_y - 5:
+                log_content.scroll_end()
+
         except Exception as e:
-            log_content = self.query_one("#log-content")
-            log_content.mount(Static(f"Error reading log file: {e}"))
+            log_content = self.query_one("#log-content", VerticalScroll)
+            await log_content.remove_children()
+            await log_content.mount(Static(f"Error reading log file: {e}"))
+
+    def on_unmount(self) -> None:
+        """Clean up the timer when screen is dismissed."""
+        if self.update_timer:
+            self.update_timer.stop()
 
     def compose(self) -> ComposeResult:
         yield Footer()
