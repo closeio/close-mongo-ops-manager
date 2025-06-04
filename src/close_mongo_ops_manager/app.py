@@ -276,32 +276,20 @@ class MongoOpsManager(App):
             if loading_timer and not loading_timer.done():
                 loading_timer.cancel()
 
-            # Store the operations data in the view
-            self.operations_view.current_ops = ops
-
             # Sort operations by running time if needed
             if hasattr(self.operations_view, "sort_running_time_asc"):
                 ops.sort(
-                    key=lambda x: float(str(x.get("secs_running", 0)).rstrip("s")),
+                    key=lambda x: float(x.get("secs_running", 0)),
                     reverse=not self.operations_view.sort_running_time_asc,
                 )
 
-            # Build a map of current operations for efficient lookups
-            current_ops_map = {}
-            for op in ops:
-                if op and "opid" in op:
-                    current_ops_map[str(op["opid"])] = op
+            # Store the operations data in the view (after sorting)
+            self.operations_view.current_ops = ops
 
-            # Get existing row keys
-            existing_keys = set(self.operations_view.rows.keys())
-            new_keys = set(current_ops_map.keys())
+            # Clear all rows to ensure correct ordering
+            self.operations_view.clear()
 
-            # Remove operations that no longer exist
-            keys_to_remove = existing_keys - new_keys
-            for key in keys_to_remove:
-                self.operations_view.remove_row(key)
-
-            # Update existing rows and add new ones
+            # Update existing rows and add new ones in sorted order
             for i, op in enumerate(ops):
                 # Skip operations without opid
                 if not op or "opid" not in op:
@@ -344,23 +332,15 @@ class MongoOpsManager(App):
                     users_str,
                 )
 
-                if op_id in existing_keys:
-                    # Update existing row
-                    for col_idx, value in enumerate(row_data):
-                        # Get the row index by counting position
-                        row_keys = list(self.operations_view.rows.keys())
-                        if op_id in row_keys:
-                            row_idx = row_keys.index(op_id)
-                            self.operations_view.update_cell_at(
-                                Coordinate(row_idx, col_idx), value
-                            )
-                else:
-                    # Add new row
-                    self.operations_view.add_row(*row_data, key=op_id)
+                # Add row
+                self.operations_view.add_row(*row_data, key=op_id)
+
+            # Build set of current operation IDs
+            current_op_ids = {str(op["opid"]) for op in ops if op and "opid" in op}
 
             # Restore selected operations
             self.operations_view.selected_ops = {
-                op_id for op_id in selected_ops_before_refresh if op_id in new_keys
+                op_id for op_id in selected_ops_before_refresh if op_id in current_op_ids
             }
 
             # Update status bar with selected operations count
