@@ -258,15 +258,26 @@ class MongoOpsManager(App):
         selected_ops_before_refresh = self.operations_view.selected_ops.copy()
 
         start_time = time.monotonic()
-        try:
+        loading_timer = None
+
+        async def set_loading_after_delay():
+            """Set loading state after a short delay to avoid flicker."""
+            await asyncio.sleep(0.1)  # 100ms delay
             self.operations_view.loading = True
+
+        try:
+            # Start loading timer
+            loading_timer = asyncio.create_task(set_loading_after_delay())
+
+            # Fetch operations
             ops = await self.mongodb.get_operations(self.operations_view.filters)
+
+            # Cancel loading timer if still running
+            if loading_timer and not loading_timer.done():
+                loading_timer.cancel()
 
             # Store the operations data in the view
             self.operations_view.current_ops = ops
-
-            # Clear the operations table
-            self.operations_view.clear()
 
             # Sort operations by running time if needed
             if hasattr(self.operations_view, "sort_running_time_asc"):
@@ -275,11 +286,29 @@ class MongoOpsManager(App):
                     reverse=not self.operations_view.sort_running_time_asc,
                 )
 
+            # Build a map of current operations for efficient lookups
+            current_ops_map = {}
             for op in ops:
+                if op and "opid" in op:
+                    current_ops_map[str(op["opid"])] = op
+
+            # Get existing row keys
+            existing_keys = set(self.operations_view.rows.keys())
+            new_keys = set(current_ops_map.keys())
+
+            # Remove operations that no longer exist
+            keys_to_remove = existing_keys - new_keys
+            for key in keys_to_remove:
+                self.operations_view.remove_row(key)
+
+            # Update existing rows and add new ones
+            for i, op in enumerate(ops):
                 # Skip operations without opid
                 if not op or "opid" not in op:
                     logger.warning("Skipping operation without opid")
                     continue
+
+                op_id = str(op["opid"])
 
                 # Get client info
                 client_info = op.get("client_s") or op.get("client", "N/A")
@@ -300,9 +329,13 @@ class MongoOpsManager(App):
                     else "N/A"
                 )
 
-                row = (
-                    " ",
-                    str(op["opid"]),
+                # Check if we need to show selection
+                is_selected = op_id in selected_ops_before_refresh
+                selection_mark = "✓" if is_selected else " "
+
+                row_data = (
+                    selection_mark,
+                    op_id,
                     op.get("type", ""),
                     op.get("op", ""),
                     f"{op.get('secs_running', 0)}s",
@@ -310,24 +343,25 @@ class MongoOpsManager(App):
                     op.get("desc", "N/A"),
                     users_str,
                 )
-                self.operations_view.add_row(*row, key=str(op["opid"]))
 
-            # Restore selected operations that still exist after refresh
-            restored_selections = set()
+                if op_id in existing_keys:
+                    # Update existing row
+                    for col_idx, value in enumerate(row_data):
+                        # Get the row index by counting position
+                        row_keys = list(self.operations_view.rows.keys())
+                        if op_id in row_keys:
+                            row_idx = row_keys.index(op_id)
+                            self.operations_view.update_cell_at(
+                                Coordinate(row_idx, col_idx), value
+                            )
+                else:
+                    # Add new row
+                    self.operations_view.add_row(*row_data, key=op_id)
 
-            if selected_ops_before_refresh:
-                for i, op in enumerate(ops):
-                    if not op or "opid" not in op:
-                        continue
-                    op_id = str(op["opid"])
-                    if op_id in selected_ops_before_refresh:
-                        restored_selections.add(op_id)
-                        self.operations_view.update_cell_at(Coordinate(i, 0), "✓")
-
-                self.operations_view.selected_ops = restored_selections
-
-            # Update the selected_ops set with restored selections
-            self.operations_view.selected_ops = restored_selections
+            # Restore selected operations
+            self.operations_view.selected_ops = {
+                op_id for op_id in selected_ops_before_refresh if op_id in new_keys
+            }
 
             # Update status bar with selected operations count
             self._status_bar.set_selected_count(len(self.operations_view.selected_ops))
@@ -351,6 +385,9 @@ class MongoOpsManager(App):
             self.notify(f"Failed to refresh: {e}", severity="error")
 
         finally:
+            # Cancel loading timer if still running
+            if loading_timer and not loading_timer.done():
+                loading_timer.cancel()
             self.operations_view.loading = False
 
     def action_refresh(self) -> None:

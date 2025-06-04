@@ -27,6 +27,7 @@ class OperationsView(DataTable):
     ]
 
     def __init__(self) -> None:
+        self._loading = False  # Initialize before calling super()
         super().__init__()
         self.cursor_type = "row"
         self.zebra_stripes = True
@@ -35,6 +36,19 @@ class OperationsView(DataTable):
         self.selected_ops: set[str] = set()
         self.can_focus = True
         self.current_ops: list[dict] = []
+
+    @property
+    def loading(self) -> bool:
+        return self._loading
+
+    @loading.setter
+    def loading(self, value: bool) -> None:
+        self._loading = value
+        # Update border title to show loading state
+        if value:
+            self.border_title = "Operations • Refreshing..."
+        else:
+            self.border_title = "Operations"
 
     def on_mount(self) -> None:
         self.add_columns(
