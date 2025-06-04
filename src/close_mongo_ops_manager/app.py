@@ -37,7 +37,7 @@ from close_mongo_ops_manager.statusbar import StatusBar
 LOG_FILE = "close_mongo_ops_manager.log"
 MIN_REFRESH_INTERVAL = 1
 MAX_REFRESH_INTERVAL = 10
-DEFAULT_REFRESH_INTERVAL = 5
+DEFAULT_REFRESH_INTERVAL = 2
 STEP_REFRESH_INTERVAL = 1  # Interval change step
 
 
@@ -111,7 +111,7 @@ class MongoOpsManager(App):
         ),
     ]
 
-    auto_refresh: reactive[bool] = reactive(False)
+    auto_refresh: reactive[bool] = reactive(True)
     refresh_interval: reactive[int] = reactive(DEFAULT_REFRESH_INTERVAL)
 
     def __init__(
@@ -151,6 +151,7 @@ class MongoOpsManager(App):
         self.operations_view.loading = True
         self._status_bar.set_refresh_interval(self.refresh_interval)
         self._status_bar.set_connection_status(False, "Connecting...")
+        self._status_bar.set_refresh_status(self.auto_refresh)
         # Ensure operations view has focus when app loads
         self.operations_view.focus()
         # Defer MongoDB connection to ensure UI is fully rendered first
