@@ -1,6 +1,6 @@
 [project]
 name = "close-mongo-ops-manager"
-version = "0.2.6"
+version = "0.3.0"
 description = "Monitor and kill MongoDB operations"
 readme = "README.md"
 requires-python = ">=3.12"
