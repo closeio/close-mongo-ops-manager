@@ -248,50 +248,23 @@ class MongoOpsManager(App):
                 # Continue running but wait before retry
                 await asyncio.sleep(self.refresh_interval)
 
-    @work(exclusive=True)
-    async def refresh_operations(self) -> None:
-        """Refresh the operations table with current data."""
-        if not self.mongodb:
-            self.operations_view.loading = False
-            return
-
-        # Save current selected operations before refreshing
-        selected_ops_before_refresh = self.operations_view.selected_ops.copy()
-
-        start_time = time.monotonic()
-        loading_timer = None
-
-        async def set_loading_after_delay():
-            """Set loading state after a short delay to avoid flicker."""
-            await asyncio.sleep(0.1)  # 100ms delay
-            self.operations_view.loading = True
-
+    async def _update_operations_view(
+        self, ops_data: list, selected_ops_before_refresh: set, start_time: float, loading_timer: asyncio.Task | None
+    ) -> None:
+        """Update the operations view with new data."""
         try:
-            # Start loading timer
-            loading_timer = asyncio.create_task(set_loading_after_delay())
-
-            # Fetch operations
-            ops = await self.mongodb.get_operations(self.operations_view.filters)
-
-            # Cancel loading timer if still running
+            # Cancel loading timer if still running (it might have finished before this point)
             if loading_timer and not loading_timer.done():
                 loading_timer.cancel()
 
-            # Sort operations by running time if needed
-            if hasattr(self.operations_view, "sort_running_time_asc"):
-                ops.sort(
-                    key=lambda x: float(x.get("secs_running", 0)),
-                    reverse=not self.operations_view.sort_running_time_asc,
-                )
-
             # Store the operations data in the view (after sorting)
-            self.operations_view.current_ops = ops
+            self.operations_view.current_ops = ops_data
 
             # Clear all rows to ensure correct ordering
             self.operations_view.clear()
 
             # Update existing rows and add new ones in sorted order
-            for i, op in enumerate(ops):
+            for i, op in enumerate(ops_data):
                 # Skip operations without opid
                 if not op or "opid" not in op:
                     logger.warning("Skipping operation without opid")
@@ -337,7 +310,7 @@ class MongoOpsManager(App):
                 self.operations_view.add_row(*row_data, key=op_id)
 
             # Build set of current operation IDs
-            current_op_ids = {str(op["opid"]) for op in ops if op and "opid" in op}
+            current_op_ids = {str(op["opid"]) for op in ops_data if op and "opid" in op}
 
             # Restore selected operations
             self.operations_view.selected_ops = {
@@ -347,12 +320,13 @@ class MongoOpsManager(App):
             }
 
             # Update status bar with selected operations count
-            self._status_bar.set_selected_count(len(self.operations_view.selected_ops))
+            if self._status_bar:
+                self._status_bar.set_selected_count(len(self.operations_view.selected_ops))
 
             # Calculate load duration and emit event
             duration = time.monotonic() - start_time
             self.operations_view.post_message(
-                OperationsLoaded(count=len(ops), duration=duration)
+                OperationsLoaded(count=len(ops_data), duration=duration)
             )
 
             # Only focus operations view if a filter input doesn't have focus
@@ -362,17 +336,64 @@ class MongoOpsManager(App):
             )
             if not has_focus_input:
                 self.operations_view.focus()
+        except Exception as e:
+            logger.error(f"Failed to update operations view: {e}", exc_info=True)
+            self.notify(f"Failed to update view: {e}", severity="error")
+        finally:
+            # Ensure loading is always set to False in the UI update method
+            self.operations_view.loading = False
+
+    @work(exclusive=True)
+    async def refresh_operations(self) -> None:
+        """Refresh the operations table with current data."""
+        if not self.mongodb:
+            self.operations_view.loading = False
+            return
+
+        # Save current selected operations before refreshing
+        selected_ops_before_refresh = self.operations_view.selected_ops.copy()
+
+        start_time = time.monotonic()
+        loading_timer = None
+
+        async def set_loading_after_delay():
+            """Set loading state after a short delay to avoid flicker."""
+            await asyncio.sleep(0.1)  # 100ms delay
+            self.operations_view.loading = True
+
+        try:
+            # Start loading timer
+            loading_timer = asyncio.create_task(set_loading_after_delay())
+
+            # Fetch operations
+            ops = await self.mongodb.get_operations(self.operations_view.filters)
+
+            # Sort operations by running time if needed
+            if hasattr(self.operations_view, "sort_running_time_asc"):
+                ops.sort(
+                    key=lambda x: float(x.get("secs_running", 0)),
+                    reverse=not self.operations_view.sort_running_time_asc,
+                )
+            
+            # Call the new method to update the UI
+            scheduled_ok = self.call_later(self._update_operations_view, ops, selected_ops_before_refresh, start_time, loading_timer)
+            if not scheduled_ok:
+                logger.warning("Could not schedule UI update for operations. Performing cleanup.")
+                if loading_timer and not loading_timer.done():
+                    loading_timer.cancel()
+                # Ensure self.operations_view exists and is not None
+                if self.operations_view:
+                    self.operations_view.loading = False
 
         except Exception as e:
             logger.error(f"Failed to refresh operations: {e}", exc_info=True)
             self.notify(f"Failed to refresh: {e}", severity="error")
-
-        finally:
-            # Cancel loading timer if still running
+            # Ensure loading state is reset in case of error before UI update
+            # This is important if get_operations fails before _update_operations_view is called
             if loading_timer and not loading_timer.done():
                 loading_timer.cancel()
             self.operations_view.loading = False
-
+    
     def action_refresh(self) -> None:
         """Handle refresh action."""
         self.refresh_operations()
