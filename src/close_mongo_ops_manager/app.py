@@ -249,7 +249,12 @@ class MongoOpsManager(App):
                 await asyncio.sleep(self.refresh_interval)
 
     async def _update_operations_view(
-        self, ops_data: list, selected_ops_before_refresh: set, start_time: float, loading_timer: asyncio.Task | None
+        self,
+        ops_data: list,
+        selected_ops_before_refresh: set,
+        start_time: float,
+        loading_timer: asyncio.Task | None,
+        cursor_position_info: dict | None = None,
     ) -> None:
         """Update the operations view with new data."""
         try:
@@ -321,7 +326,29 @@ class MongoOpsManager(App):
 
             # Update status bar with selected operations count
             if self._status_bar:
-                self._status_bar.set_selected_count(len(self.operations_view.selected_ops))
+                self._status_bar.set_selected_count(
+                    len(self.operations_view.selected_ops)
+                )
+
+            # Restore cursor position if we saved it before refresh
+            if cursor_position_info and cursor_position_info.get("opid"):
+                target_opid = cursor_position_info["opid"]
+                fallback_row_index = cursor_position_info.get("row_index", 0)
+
+                # Find the new row index of the previously selected operation
+                new_row_index = None
+                for i, op in enumerate(ops_data):
+                    if op and str(op.get("opid", "")) == target_opid:
+                        new_row_index = i
+                        break
+
+                # If we found the operation in the new data, move cursor there
+                if new_row_index is not None:
+                    self.operations_view.move_cursor(row=new_row_index)
+                elif len(ops_data) > 0:
+                    # Fallback: use the previous row index, clamped to available rows
+                    fallback_index = min(fallback_row_index, len(ops_data) - 1)
+                    self.operations_view.move_cursor(row=fallback_index)
 
             # Calculate load duration and emit event
             duration = time.monotonic() - start_time
@@ -353,6 +380,24 @@ class MongoOpsManager(App):
         # Save current selected operations before refreshing
         selected_ops_before_refresh = self.operations_view.selected_ops.copy()
 
+        # Save cursor position to preserve user's position in the table
+        cursor_position_info = None
+        if (
+            self.operations_view.cursor_row is not None
+            and self.operations_view.current_ops
+            and 0
+            <= self.operations_view.cursor_row
+            < len(self.operations_view.current_ops)
+        ):
+            # Save the opid of the currently selected row
+            current_op = self.operations_view.current_ops[
+                self.operations_view.cursor_row
+            ]
+            cursor_position_info = {
+                "opid": str(current_op.get("opid", "")),
+                "row_index": self.operations_view.cursor_row,
+            }
+
         start_time = time.monotonic()
         loading_timer = None
 
@@ -374,11 +419,20 @@ class MongoOpsManager(App):
                     key=lambda x: float(x.get("secs_running", 0)),
                     reverse=not self.operations_view.sort_running_time_asc,
                 )
-            
+
             # Call the new method to update the UI
-            scheduled_ok = self.call_later(self._update_operations_view, ops, selected_ops_before_refresh, start_time, loading_timer)
+            scheduled_ok = self.call_later(
+                self._update_operations_view,
+                ops,
+                selected_ops_before_refresh,
+                start_time,
+                loading_timer,
+                cursor_position_info,
+            )
             if not scheduled_ok:
-                logger.warning("Could not schedule UI update for operations. Performing cleanup.")
+                logger.warning(
+                    "Could not schedule UI update for operations. Performing cleanup."
+                )
                 if loading_timer and not loading_timer.done():
                     loading_timer.cancel()
                 # Ensure self.operations_view exists and is not None
@@ -393,7 +447,7 @@ class MongoOpsManager(App):
             if loading_timer and not loading_timer.done():
                 loading_timer.cancel()
             self.operations_view.loading = False
-    
+
     def action_refresh(self) -> None:
         """Handle refresh action."""
         self.refresh_operations()
