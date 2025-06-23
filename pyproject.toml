@@ -8,7 +8,7 @@ license = "MIT"
 authors = [{ name = "Vicenç Juan Tomàs Monserrat", email = "vicenc.monserrat@close.com" }]
 dependencies = [
     "pymongo==4.13.2",
-    "textual>=3.4.0,<4.0.0",
+    "textual>=3.5.0,<4.0.0",
 ]
 keywords = [
   "mongo", "operations", "manager"
