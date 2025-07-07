@@ -1,7 +1,7 @@
 # close-mongo-ops-manager
-Monitor and kill MongoDB operations (Be advised that this is in a Alpha state. You may encounter some bugs.)
+Monitor and kill MongoDB operations (Be advised that this is in a Beta state. You may encounter some bugs.)
 
-The app is published in [pypi](https://pypi.org/project/close-mongo-ops-manager/)
+The app is also published in [pypi](https://pypi.org/project/close-mongo-ops-manager/)
 
 # Requirements
 
@@ -10,7 +10,7 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/#installing-
 Once installed you should see something similar to this:
 ```shell
 $ uv self version
-uv 0.7.0 (62bca8c34 2025-04-29)
+uv 0.7.19 (38ee6ec80 2025-07-02)
 ```
 
 Use the right Python version
