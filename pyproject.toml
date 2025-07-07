@@ -35,8 +35,5 @@ Source = "https://github.com/closeio/close-mongo-ops-manager"
 close-mongo-ops-manager = "close_mongo_ops_manager.app:main"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/close_mongo_ops_manager"]
+requires = ["uv_build>=0.7.19,<0.8.0"]
+build-backend = "uv_build"
