@@ -42,11 +42,47 @@ class OperationDetailsScreen(ModalScreen):
 
     BINDINGS = [
         Binding("escape", "dismiss", "Close", show=False),
+        Binding("up", "scroll_up", "Scroll Up", show=False),
+        Binding("down", "scroll_down", "Scroll Down", show=False),
+        Binding("pageup", "page_up", "Page Up", show=False),
+        Binding("pagedown", "page_down", "Page Down", show=False),
+        Binding("home", "scroll_home", "Home", show=False),
+        Binding("end", "scroll_end", "End", show=False),
     ]
 
     def __init__(self, operation: dict) -> None:
         super().__init__()
         self.operation = operation
+
+    def action_scroll_up(self) -> None:
+        """Scroll up in the details container."""
+        container = self.query_one("#details-container", ScrollableContainer)
+        container.scroll_up()
+
+    def action_scroll_down(self) -> None:
+        """Scroll down in the details container."""
+        container = self.query_one("#details-container", ScrollableContainer)
+        container.scroll_down()
+
+    def action_page_up(self) -> None:
+        """Page up in the details container."""
+        container = self.query_one("#details-container", ScrollableContainer)
+        container.scroll_page_up()
+
+    def action_page_down(self) -> None:
+        """Page down in the details container."""
+        container = self.query_one("#details-container", ScrollableContainer)
+        container.scroll_page_down()
+
+    def action_scroll_home(self) -> None:
+        """Scroll to the top of the details container."""
+        container = self.query_one("#details-container", ScrollableContainer)
+        container.scroll_home()
+
+    def action_scroll_end(self) -> None:
+        """Scroll to the bottom of the details container."""
+        container = self.query_one("#details-container", ScrollableContainer)
+        container.scroll_end()
 
     def compose(self) -> ComposeResult:
         with ScrollableContainer(id="details-container"):
