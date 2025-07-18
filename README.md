@@ -10,7 +10,7 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/#installing-
 Once installed you should see something similar to this:
 ```shell
 $ uv self version
-uv 0.7.19 (38ee6ec80 2025-07-02)
+uv 0.8.0 (0b2357294 2025-07-17)
 ```
 
 Use the right Python version
