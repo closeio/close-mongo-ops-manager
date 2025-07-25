@@ -60,6 +60,10 @@ The application supports these command line options:
 - `--version`: Show version information
 - `--help`: Show help information
 
+### Theming
+
+The application supports multiple themes that can be changed using `Ctrl+T`. Theme preferences are automatically saved and restored between sessions.
+
 ## Architecture
 
 The application is built using the [Textual](https://textual.textualize.io/) framework for terminal user interfaces and uses [PyMongo](https://pymongo.readthedocs.io/en/stable/) for MongoDB connectivity.
@@ -88,6 +92,16 @@ The application is built using the [Textual](https://textual.textualize.io/) fra
 
 8. **StatusBar (`statusbar.py`)**: Shows status information like connection state and refresh status.
 
+9. **ThemeManager (`theme_manager.py`)**: Manages theme selection and persistence.
+   - Provides multiple built-in themes plus custom themes
+   - Handles theme switching and configuration
+
+10. **ThemeScreen (`theme_screen.py`)**: Interactive theme selection screen.
+
+11. **ConfigManager (`config_manager.py`)**: Manages application configuration persistence.
+    - Saves and loads theme preferences
+    - Configuration stored in `~/.config/close-mongo-ops-manager/config.json`
+
 ## Core Features
 
 - Connect to MongoDB servers (authenticated or unauthenticated)
@@ -98,3 +112,4 @@ The application is built using the [Textual](https://textual.textualize.io/) fra
 - Auto-refresh with configurable interval
 - View detailed operation information
 - View application logs
+- Theme switching with persistent preferences

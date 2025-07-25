@@ -60,6 +60,7 @@ Ctrl+S  : Sort by running time
 Ctrl+L  : View application logs
 Ctrl+A  : Toggle selection (select all/deselect all)
 Ctrl+F  : Toggle filter bar visibility
+Ctrl+T  : Change theme
 Ctrl++  : Increase refresh interval
 Ctrl+-  : Decrease refresh interval
 Enter   : See operation details
@@ -80,6 +81,25 @@ This is the tipical usage:
 - Filter operations using the input fields
 - Clear filters with the Clear button
 - Confirm kill operations when prompted
+
+## Theming
+
+The application supports multiple themes that can be changed using `Ctrl+T`. Available themes include:
+
+- **textual-dark** (default) - Standard dark theme
+- **textual-light** - Standard light theme
+- **close-mongodb** - Custom theme with MongoDB brand colors
+- **nord** - Nord color scheme
+- **gruvbox** - Gruvbox color scheme
+- **tokyo-night** - Tokyo Night theme
+- **solarized-light** - Solarized light theme
+- **dracula** - Dracula theme
+- **monokai** - Monokai theme
+- **flexoki** - Flexoki theme
+- **catppuccin-mocha** - Catppuccin Mocha theme
+- **catppuccin-latte** - Catppuccin Latte theme
+
+Theme preferences are automatically saved to `~/.config/close-mongo-ops-manager/config.json` and will be restored when you restart the application.
 
 ## Screenshot
 
