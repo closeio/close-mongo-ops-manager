@@ -31,6 +31,9 @@ from close_mongo_ops_manager.messages import (
 from close_mongo_ops_manager.mongodb_manager import MongoDBManager
 from close_mongo_ops_manager.operations_view import OperationsView
 from close_mongo_ops_manager.statusbar import StatusBar
+from close_mongo_ops_manager.theme_manager import ThemeManager
+from close_mongo_ops_manager.config_manager import ConfigManager
+from close_mongo_ops_manager.theme_screen import ThemeScreen
 
 
 # Constants
@@ -95,6 +98,7 @@ class MongoOpsManager(App):
         Binding("ctrl+l", "show_logs", "View Logs"),
         Binding("ctrl+a", "toggle_selection", "Toggle Selection"),
         Binding("ctrl+f", "toggle_filter_bar", "Toggle Filters"),
+        Binding("ctrl+t", "change_theme", "Theme"),
         Binding(
             "ctrl+equals_sign",
             "increase_refresh",
@@ -131,6 +135,25 @@ class MongoOpsManager(App):
         self.namespace: str = namespace
         self.hide_system_ops = hide_system_ops
 
+        # Initialize theme management
+        self.config_manager = ConfigManager()
+        self.theme_manager = ThemeManager()
+
+        # Register custom themes with Textual
+        self._register_custom_themes()
+
+        # Load saved theme configuration
+        theme_config = self.config_manager.load_theme_config()
+        self.theme_manager.config = theme_config
+
+        # Apply saved theme
+        self.theme = theme_config.current_theme
+
+    def _register_custom_themes(self) -> None:
+        """Register custom themes with Textual app."""
+        for theme_name, theme in self.theme_manager._custom_themes.items():
+            self.register_theme(theme)
+
     @staticmethod
     def validate_refresh_interval(value: int) -> int:
         """Validate refresh interval."""
@@ -164,6 +187,28 @@ class MongoOpsManager(App):
     def action_show_logs(self) -> None:
         """Show the log viewer screen."""
         self.push_screen(LogScreen(self.log_file))
+
+    def action_change_theme(self) -> None:
+        """Show theme selection screen."""
+        available_themes = self.theme_manager.get_available_themes()
+        current_theme = self.theme_manager.get_current_theme()
+
+        async def handle_theme_selection(selected_theme: str | None) -> None:
+            if selected_theme and self.theme_manager.set_current_theme(selected_theme):
+                # Apply the new theme
+                self.theme = selected_theme
+
+                # Save the configuration
+                self.config_manager.save_theme_config(self.theme_manager.config)
+
+                # Notify user
+                theme_display = selected_theme.replace("-", " ").title()
+                self.notify(f"Theme changed to {theme_display}")
+
+        self.push_screen(
+            ThemeScreen(available_themes, current_theme),
+            callback=handle_theme_selection,
+        )
 
     async def _start_connection(self) -> None:
         """Start the MongoDB connection process after UI is ready."""

@@ -56,6 +56,7 @@ class HelpScreen(ModalScreen):
     Ctrl+L  : View application logs
     Ctrl+A  : Toggle selection (select all/deselect all)
     Ctrl+F  : Toggle filter bar visibility
+    Ctrl+T  : Change theme
     Ctrl++  : Increase refresh interval
     Ctrl+-  : Decrease refresh interval
     Enter   : See operation details
