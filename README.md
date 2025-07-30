@@ -47,6 +47,20 @@ Or you can just use `uvx`
 uvx -n close-mongo-ops-manager
 ```
 
+## Command Line Options
+
+The application supports these command line options:
+- `--host`: MongoDB host (default: localhost or MONGODB_HOST env var)
+- `--port`: MongoDB port (default: 27017 or MONGODB_PORT env var)
+- `--username`: MongoDB username (or MONGODB_USERNAME env var)
+- `--password`: MongoDB password (or MONGODB_PASSWORD env var)
+- `--namespace`: MongoDB namespace to monitor (default: ".*")
+- `--refresh-interval`: Refresh interval in seconds (default: 2, min: 1, max: 10)
+- `--show-system-ops`: Show system operations (disabled by default)
+- `--load-balanced`: Enable load balancer support for MongoDB connections
+- `--version`: Show version information
+- `--help`: Show help information
+
 ## Usage
 
 These are the actions you can do in the app. You can see them in the app help menu as well.

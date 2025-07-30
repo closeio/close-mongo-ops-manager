@@ -55,8 +55,9 @@ The application supports these command line options:
 - `--username`: MongoDB username (or MONGODB_USERNAME env var)
 - `--password`: MongoDB password (or MONGODB_PASSWORD env var)
 - `--namespace`: MongoDB namespace to monitor (default: ".*")
-- `--refresh-interval`: Refresh interval in seconds (default: 5)
+- `--refresh-interval`: Refresh interval in seconds (default: 2)
 - `--show-system-ops`: Show system operations (disabled by default)
+- `--load-balanced`: Enable load balancer support for MongoDB connections
 - `--version`: Show version information
 - `--help`: Show help information
 

@@ -124,6 +124,7 @@ class MongoOpsManager(App):
         refresh_interval: int = DEFAULT_REFRESH_INTERVAL,
         namespace: str = "",
         hide_system_ops: bool = True,
+        load_balanced: bool = False,
     ) -> None:
         super().__init__()
         self.connection_string = connection_string
@@ -134,6 +135,7 @@ class MongoOpsManager(App):
         self._status_bar: StatusBar | None = None
         self.namespace: str = namespace
         self.hide_system_ops = hide_system_ops
+        self.load_balanced = load_balanced
 
         # Initialize theme management
         self.config_manager = ConfigManager()
@@ -218,7 +220,7 @@ class MongoOpsManager(App):
         """Initialize MongoDB connection and start operation monitoring."""
         try:
             self.mongodb = await MongoDBManager.connect(
-                self.connection_string, self.namespace, self.hide_system_ops
+                self.connection_string, self.namespace, self.hide_system_ops, self.load_balanced
             )
             # Extract connection details for status bar
             host_info = "MongoDB server"
@@ -772,6 +774,11 @@ def main() -> None:
         help="Show system operations (disabled by default)",
     )
     parser.add_argument(
+        "--load-balanced",
+        action="store_true",
+        help="Enable load balancer support for MongoDB connections",
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"v{version('close-mongo-ops-manager')}",
@@ -822,6 +829,7 @@ def main() -> None:
             refresh_interval=refresh_interval,
             namespace=args.namespace,
             hide_system_ops=not args.show_system_ops,
+            load_balanced=args.load_balanced,
         )
         app.run()
 
