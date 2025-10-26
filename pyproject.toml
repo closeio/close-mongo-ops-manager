@@ -1,14 +1,14 @@
 [project]
 name = "close-mongo-ops-manager"
-version = "0.5.1"
+version = "0.5.2"
 description = "Monitor and kill MongoDB operations"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Vicenç Juan Tomàs Monserrat", email = "vicenc.monserrat@close.com" }]
 dependencies = [
-    "pymongo==4.13.2",
-    "textual>=5.0.0,<6.0.0",
+    "pymongo==4.15.3",
+    "textual>=6.0.0,<7.0.0",
 ]
 keywords = [
   "mongo", "operations", "manager"
@@ -22,6 +22,7 @@ classifiers = [
   "Programming Language :: Python",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: 3 :: Only",
   "Topic :: Database :: Front-Ends"
 ]
@@ -35,5 +36,5 @@ Source = "https://github.com/closeio/close-mongo-ops-manager"
 close-mongo-ops-manager = "close_mongo_ops_manager.app:main"
 
 [build-system]
-requires = ["uv_build>=0.8.0,<0.9.0"]
+requires = ["uv_build>=0.9.0,<0.10.0"]
 build-backend = "uv_build"

@@ -10,7 +10,7 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/#installing-
 Once installed you should see something similar to this:
 ```shell
 $ uv self version
-uv 0.8.0 (0b2357294 2025-07-17)
+uv 0.9.5 (d5f39331a 2025-10-21)
 ```
 
 Use the right Python version
@@ -25,7 +25,7 @@ uv python list
 
 Pin the Python 3.13 version
 ```shell
-uv python pin cpython-3.13.3-macos-aarch64-none
+uv python pin cpython-3.13.9-macos-aarch64-none
 ```
 
 # Dependencies
