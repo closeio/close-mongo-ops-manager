@@ -7,6 +7,7 @@ from textual.widgets.option_list import Option
 
 
 class ThemeScreen(ModalScreen):
+    id = "theme_screen"
     """Theme selection screen."""
 
     DEFAULT_CSS = """

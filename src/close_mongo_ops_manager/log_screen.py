@@ -10,6 +10,7 @@ from textual.timer import Timer
 
 
 class LogScreen(ModalScreen):
+    id = "log_screen"
     """Screen for viewing application logs."""
 
     BORDER_TITLE = "Application Logs"
