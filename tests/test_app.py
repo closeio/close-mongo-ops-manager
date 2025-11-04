@@ -117,7 +117,7 @@ async def test_kill_selected_action_with_selection(
 
         # Click the "Yes" button directly instead of navigating
         yes_button = app.screen.query_one("#yes")
-        await pilot.click("#yes")
+        await pilot.click(yes_button)
         await pilot.pause(0.3)  # Give more time for async operations
 
         app.mongodb.kill_operation.assert_called_with("12345")

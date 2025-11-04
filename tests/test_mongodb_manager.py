@@ -276,7 +276,7 @@ async def test_filter_running_time_non_numeric(manager: MongoDBManager):
 
     # Non-numeric running_time should be ignored
     filters = {"running_time": "abc"}
-    operations = await manager.get_operations(filters)
+    _ = await manager.get_operations(filters)
 
     # Verify aggregate was called
     call_args = manager.admin_db.aggregate.call_args[0][0]
@@ -297,7 +297,7 @@ async def test_filter_running_time_negative(manager: MongoDBManager):
 
     # Negative running_time (technically isdigit() returns False for negative)
     filters = {"running_time": "-5"}
-    operations = await manager.get_operations(filters)
+    _ = await manager.get_operations(filters)
 
     # Verify the filter is not applied since "-5".isdigit() is False
     call_args = manager.admin_db.aggregate.call_args[0][0]
@@ -315,7 +315,7 @@ async def test_filter_running_time_zero(manager: MongoDBManager):
 
     # Zero is a valid filter value
     filters = {"running_time": "0"}
-    operations = await manager.get_operations(filters)
+    _ = await manager.get_operations(filters)
 
     # Verify the filter was applied with value 0
     call_args = manager.admin_db.aggregate.call_args[0][0]
@@ -345,7 +345,7 @@ async def test_filter_multiple_criteria_combined(manager: MongoDBManager):
         "effective_users": "testuser",
         "running_time": "10",
     }
-    operations = await manager.get_operations(filters)
+    _ = await manager.get_operations(filters)
 
     # Verify all filters were added to the pipeline
     call_args = manager.admin_db.aggregate.call_args[0][0]
