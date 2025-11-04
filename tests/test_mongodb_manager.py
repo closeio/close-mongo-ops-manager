@@ -33,9 +33,7 @@ def mock_async_mongo_client():
 async def manager(mock_client_constructor, mock_async_mongo_client):
     """Fixture for a MongoDBManager instance."""
     mock_client_constructor.return_value = mock_async_mongo_client
-    manager = await MongoDBManager.connect(
-        "mongodb://localhost:27017", "test_ns", True
-    )
+    manager = await MongoDBManager.connect("mongodb://localhost:27017", "test_ns", True)
     return manager
 
 
@@ -119,3 +117,100 @@ async def test_close_connection(manager: MongoDBManager):
     """Test closing the MongoDB connection."""
     await manager.close()
     manager.client.close.assert_called_once()
+
+
+async def test_parse_complex_currentop_output(manager: MongoDBManager):
+    """Test parsing complex $currentOp output with all metadata fields."""
+    # Sample operation from MongoDB $currentOp with full metadata
+    sample_operation = {
+        "type": "op",
+        "host": "am11-mgo-cio1-s25-dn-27.closeinfra.com:27017",
+        "desc": "conn11007",
+        "connectionId": 11007,
+        "client": "10.11.17.243:41024",
+        "clientMetadata": {
+            "driver": {"name": "PyMongo", "version": "4.6.3"},
+            "os": {
+                "type": "Linux",
+                "name": "Linux",
+                "architecture": "x86_64",
+                "version": "6.8.0-1031-aws",
+            },
+            "platform": "CPython 3.12.3.final.0",
+            "mongos": {
+                "host": "am11-mgo-cio1-rtr-113.closeinfra.com:27020",
+                "client": "10.11.149.189:41978",
+                "version": "7.0.18-11",
+            },
+        },
+        "active": True,
+        "currentOpTime": "2025-11-01T05:37:31.358+00:00",
+        "effectiveUsers": [{"user": "closeio2", "db": "closeio"}],
+        "runBy": [{"user": "__system", "db": "local"}],
+        "threaded": True,
+        "opid": 727852,
+        "secs_running": 0,
+        "microsecs_running": 173436,
+        "op": "query",
+        "ns": "closeio.activity",
+        "redacted": False,
+        "command": {
+            "find": "activity",
+            "filter": {
+                "organization": "orga_wFx9LC3AImbzDu5S9UJRSIeyFU9230B8LhQlhA8lWvU",
+                "_cls": "Activity.Email",
+            },
+            "sort": {"date_created": -1},
+            "skip": 77600,
+            "limit": 101,
+        },
+        "numYields": 21,
+        "locks": {"FeatureCompatibilityVersion": "r", "Global": "r"},
+        "waitingForLock": False,
+        "waitingForFlowControl": False,
+    }
+
+    # Mock the aggregate method to return the sample operation
+    manager.admin_db.aggregate.return_value.to_list.return_value = [sample_operation]
+
+    # Get operations
+    operations = await manager.get_operations()
+
+    # Verify the operation was returned
+    assert len(operations) == 1
+    op = operations[0]
+
+    # Verify all key fields are present and correct
+    assert op["opid"] == 727852
+    assert op["type"] == "op"
+    assert op["op"] == "query"
+    assert op["ns"] == "closeio.activity"
+    assert op["desc"] == "conn11007"
+    assert op["client"] == "10.11.17.243:41024"
+    assert op["secs_running"] == 0
+    assert op["microsecs_running"] == 173436
+    assert op["active"] is True
+
+    # Verify effective users
+    assert "effectiveUsers" in op
+    assert len(op["effectiveUsers"]) == 1
+    assert op["effectiveUsers"][0]["user"] == "closeio2"
+    assert op["effectiveUsers"][0]["db"] == "closeio"
+
+    # Verify clientMetadata is present
+    assert "clientMetadata" in op
+    assert op["clientMetadata"]["driver"]["name"] == "PyMongo"
+    assert op["clientMetadata"]["driver"]["version"] == "4.6.3"
+
+    # Verify mongos metadata
+    assert "mongos" in op["clientMetadata"]
+    assert op["clientMetadata"]["mongos"]["host"] == "am11-mgo-cio1-rtr-113.closeinfra.com:27020"
+
+    # Verify command details
+    assert "command" in op
+    assert op["command"]["find"] == "activity"
+    assert op["command"]["limit"] == 101
+
+    # Verify locks information
+    assert "locks" in op
+    assert op["locks"]["Global"] == "r"

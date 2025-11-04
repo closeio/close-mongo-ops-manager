@@ -1,8 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from textual import events
-from textual.pilot import Pilot
 from pymongo.errors import PyMongoError
 
 from close_mongo_ops_manager.app import MongoOpsManager, main
@@ -23,9 +21,10 @@ def mock_mongo_manager():
 @pytest.fixture
 async def app(mock_mongo_manager):
     """Fixture for the MongoOpsManager app."""
-    with patch(
-        "close_mongo_ops_manager.app.MongoDBManager", new=mock_mongo_manager
-    ), patch("close_mongo_ops_manager.app.setup_logging"):
+    with (
+        patch("close_mongo_ops_manager.app.MongoDBManager", new=mock_mongo_manager),
+        patch("close_mongo_ops_manager.app.setup_logging"),
+    ):
         app = MongoOpsManager(connection_string="mongodb://localhost:27017")
         yield app
 
@@ -48,9 +47,10 @@ async def test_app_mount_and_connection(app: MongoOpsManager):
 async def test_app_connection_failure(mock_mongo_manager):
     """Test app behavior on MongoDB connection failure."""
     mock_mongo_manager.connect.side_effect = PyMongoError("Connection failed")
-    with patch(
-        "close_mongo_ops_manager.app.MongoDBManager", new=mock_mongo_manager
-    ), patch("close_mongo_ops_manager.app.setup_logging"):
+    with (
+        patch("close_mongo_ops_manager.app.MongoDBManager", new=mock_mongo_manager),
+        patch("close_mongo_ops_manager.app.setup_logging"),
+    ):
         app = MongoOpsManager(connection_string="mongodb://localhost:27017")
         async with app.run_test() as pilot:
             await pilot.pause(0.1)
@@ -86,9 +86,7 @@ async def test_kill_selected_action_no_selection(
     """Test kill selected action with no operations selected."""
     async with app.run_test() as pilot:
         await pilot.press("ctrl+k")
-        assert "No operations selected" in [
-            n.message for n in pilot.app._notifications
-        ]
+        assert "No operations selected" in [n.message for n in pilot.app._notifications]
 
 
 async def test_kill_selected_action_with_selection(
@@ -97,15 +95,30 @@ async def test_kill_selected_action_with_selection(
     """Test kill selected action with selected operations."""
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
+
+        # Create a complete operation object with all expected fields
+        test_operation = {
+            "opid": "12345",
+            "op": "query",
+            "ns": "test.collection",
+            "client": "127.0.0.1:12345",
+            "desc": "conn123",
+            "secs_running": 10,
+            "command": {"find": "collection", "filter": {"test": "value"}},
+        }
+
         app.operations_view.selected_ops = {"12345"}
-        app.mongodb.get_operations.return_value = [{"opid": "12345"}]
+        app.mongodb.get_operations.return_value = [test_operation]
         app.mongodb.kill_operation.return_value = True
 
+        # Trigger kill action
         await pilot.press("ctrl+k")
-        await pilot.pause(0.1)
-        await pilot.press("left")  # Move focus to "Yes" button
-        await pilot.press("enter")
-        await pilot.pause(0.1)
+        await pilot.pause(0.2)  # Give more time for dialog to appear
+
+        # Click the "Yes" button directly instead of navigating
+        yes_button = app.screen.query_one("#yes")
+        await pilot.click("#yes")
+        await pilot.pause(0.3)  # Give more time for async operations
 
         app.mongodb.kill_operation.assert_called_with("12345")
         assert "Successfully killed 1 operation(s)" in [
@@ -196,3 +209,72 @@ def test_main_function(monkeypatch):
 
     main()
     mock_app_run.assert_called_once()
+
+
+async def test_display_operation_with_mongos_metadata(app: MongoOpsManager):
+    """Test that operations with mongos metadata are displayed correctly."""
+    # Sample operation with full clientMetadata including mongos info
+    sample_operation = {
+        "type": "op",
+        "host": "am11-mgo-cio1-s25-dn-27.closeinfra.com:27017",
+        "desc": "conn11007",
+        "client": "10.11.17.243:41024",
+        "clientMetadata": {
+            "driver": {"name": "PyMongo", "version": "4.6.3"},
+            "mongos": {
+                "host": "am11-mgo-cio1-rtr-113.closeinfra.com:27020",
+                "client": "10.11.149.189:41978",
+                "version": "7.0.18-11",
+            },
+        },
+        "opid": 727852,
+        "secs_running": 0,
+        "microsecs_running": 173436,
+        "op": "query",
+        "ns": "closeio.activity",
+        "active": True,
+        "effectiveUsers": [{"user": "closeio2", "db": "closeio"}],
+        "command": {
+            "find": "activity",
+            "filter": {"organization": "test_org"},
+        },
+    }
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+
+        # Mock get_operations to return our sample operation
+        app.mongodb.get_operations.return_value = [sample_operation]
+
+        # Refresh to load the operation
+        await pilot.press("ctrl+r")
+        await pilot.pause(0.1)
+
+        # Verify the operation was added to the table
+        assert len(app.operations_view.current_ops) == 1
+        displayed_op = app.operations_view.current_ops[0]
+
+        # Verify all fields are present
+        assert displayed_op["opid"] == 727852
+        assert displayed_op["op"] == "query"
+        assert displayed_op["ns"] == "closeio.activity"
+        assert displayed_op["desc"] == "conn11007"
+        assert displayed_op["client"] == "10.11.17.243:41024"
+
+        # Verify clientMetadata structure
+        assert "clientMetadata" in displayed_op
+        assert "mongos" in displayed_op["clientMetadata"]
+        assert (
+            displayed_op["clientMetadata"]["mongos"]["host"]
+            == "am11-mgo-cio1-rtr-113.closeinfra.com:27020"
+        )
+
+        # Verify effective users
+        assert len(displayed_op["effectiveUsers"]) == 1
+        assert displayed_op["effectiveUsers"][0]["user"] == "closeio2"
+
+        # Verify command details
+        assert displayed_op["command"]["find"] == "activity"
+
+        # Check that the data table has exactly one row
+        assert app.operations_view.row_count == 1

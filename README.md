@@ -12,27 +12,11 @@ Once installed you should see something similar to this:
 $ uv self version
 uv 0.9.5 (d5f39331a 2025-10-21)
 ```
-
-Use the right Python version
-```shell
-uv python install 3.13
-```
-
-List the Python versions
-```shell
-uv python list
-```
-
-Pin the Python 3.13 version
-```shell
-uv python pin cpython-3.13.9-macos-aarch64-none
-```
-
-# Dependencies
+# Sync Project Dependencies
 
 Sync the project
 ```shell
-uv sync
+uv sync --python 3.13
 ```
 
 # Running the app
