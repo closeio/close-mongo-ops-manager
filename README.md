@@ -19,6 +19,13 @@ Sync the project
 uv sync --python 3.13
 ```
 
+### Testing
+
+Run tests
+```shell
+uv run pytest -v
+```
+
 # Running the app
 
 Launch the application

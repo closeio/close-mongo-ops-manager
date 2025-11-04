@@ -24,6 +24,13 @@ Install dependencies:
 uv sync --python 3.13
 ```
 
+### Testing
+
+Run tests
+```shell
+uv run pytest -v
+```
+
 ## Running the Application
 
 Run the application:
