@@ -758,6 +758,12 @@ def main() -> None:
         help="MongoDB password",
     )
     parser.add_argument(
+        "--auth-source",
+        default=os.environ.get("MONGODB_AUTH_SOURCE", "admin"),
+        type=str,
+        help="MongoDB authentication database (default: admin)",
+    )
+    parser.add_argument(
         "--namespace", help="MongoDB namespace to monitor", type=str, default=".*"
     )
     parser.add_argument(
@@ -794,6 +800,7 @@ def main() -> None:
     # Build connection string
     username = args.username or os.environ.get("MONGODB_USERNAME")
     password = args.password or os.environ.get("MONGODB_PASSWORD")
+    auth_source = args.auth_source or os.environ.get("MONGODB_AUTH_SOURCE", "admin")
     host = args.host or os.environ.get("MONGODB_HOST", "localhost")
     port = args.port or os.environ.get("MONGODB_PORT", "27017")
 
@@ -803,7 +810,8 @@ def main() -> None:
             # Use authenticated connection
             username = quote_plus(username)
             password = quote_plus(password)
-            connection_string = f"mongodb://{username}:{password}@{host}:{port}/"
+            auth_source = quote_plus(auth_source)
+            connection_string = f"mongodb://{username}:{password}@{host}:{port}/?authSource={auth_source}"
         else:
             # Use unauthenticated connection
             connection_string = f"mongodb://{host}:{port}/"

@@ -17,23 +17,18 @@ The project uses [uv](https://docs.astral.sh/uv/) for Python environment managem
 # Follow installation instructions at https://docs.astral.sh/uv/getting-started/installation/
 ```
 
-2. Set up the Python environment:
-```shell
-# Install the required Python version
-uv python install 3.13
-
-# List Python versions
-uv python list
-
-# Pin to Python 3.13
-uv python pin cpython-3.13.3-macos-aarch64-none
-```
-
-### Dependencies
+### Sync Project Dependencies
 
 Install dependencies:
 ```shell
-uv sync
+uv sync --python 3.13
+```
+
+### Testing
+
+Run tests
+```shell
+uv run pytest -v
 ```
 
 ## Running the Application
@@ -54,6 +49,7 @@ The application supports these command line options:
 - `--port`: MongoDB port (default: 27017 or MONGODB_PORT env var)
 - `--username`: MongoDB username (or MONGODB_USERNAME env var)
 - `--password`: MongoDB password (or MONGODB_PASSWORD env var)
+- `--auth-source`: MongoDB authentication database (default: admin or MONGODB_AUTH_SOURCE env var)
 - `--namespace`: MongoDB namespace to monitor (default: ".*")
 - `--refresh-interval`: Refresh interval in seconds (default: 2)
 - `--show-system-ops`: Show system operations (disabled by default)

@@ -8,6 +8,7 @@ license = "MIT"
 authors = [{ name = "Vicenç Juan Tomàs Monserrat", email = "vicenc.monserrat@close.com" }]
 dependencies = [
     "pymongo==4.15.3",
+    "pytest-asyncio>=1.2.0",
     "textual>=6.0.0,<7.0.0",
 ]
 keywords = [

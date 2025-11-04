@@ -102,10 +102,6 @@ class MongoDBManager:
                                 {
                                     "effectiveUsers.user": "__system"
                                 },  # exclude system users
-                                {
-                                    "op": "command",
-                                    "command.cursor": {"$exists": True},
-                                },  # Filter cursor operations
                             ]
                         }
                     )
@@ -177,8 +173,6 @@ class MongoDBManager:
                         match_stage["$and"].append(
                             {"secs_running": {"$gte": int(filters["running_time"])}}
                         )
-
-                match_stage["$and"].append({"active": True})
 
                 if match_stage["$and"]:
                     pipeline.append({"$match": match_stage})

@@ -8,6 +8,7 @@ from textual.widgets import Button, Static
 
 
 class KillConfirmation(ModalScreen[bool]):
+    id = "kill_confirmation_screen"
     """Modal screen for kill operation confirmation."""
 
     AUTO_FOCUS = "#no"

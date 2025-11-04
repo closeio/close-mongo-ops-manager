@@ -9,6 +9,7 @@ from textual.widgets import Footer, Static
 
 
 class HelpScreen(ModalScreen):
+    id = "help_screen"
     """Help screen showing keyboard shortcuts and usage information."""
 
     DEFAULT_CSS = """
