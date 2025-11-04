@@ -205,7 +205,7 @@ def test_main_function(monkeypatch):
     """Test the main function of the app."""
     mock_app_run = MagicMock()
     monkeypatch.setattr("close_mongo_ops_manager.app.MongoOpsManager.run", mock_app_run)
-    monkeypatch.setattr("sys.argv", ["close-mongo-ops-manager", "--host", "test_host"])
+    monkeypatch.setattr("sys.argv", ["close-mongo-ops-manager", "--host", "localhost", "--port", "27017"])
 
     main()
     mock_app_run.assert_called_once()
@@ -278,3 +278,146 @@ async def test_display_operation_with_mongos_metadata(app: MongoOpsManager):
 
         # Check that the data table has exactly one row
         assert app.operations_view.row_count == 1
+
+
+async def test_refresh_operations_mongodb_none(app: MongoOpsManager):
+    """Test refresh_operations when mongodb is None."""
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        # Set mongodb to None to simulate disconnection
+        app.mongodb = None
+
+        # Refresh should not raise an error, just return early
+        await pilot.press("ctrl+r")
+        await pilot.pause(0.1)
+
+        # View should not be loading
+        assert not app.operations_view.loading
+
+
+async def test_kill_selected_partial_failure(app: MongoOpsManager):
+    """Test kill selected when some kills succeed and some fail."""
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+
+        # Create operations
+        operations = [
+            {
+                "opid": "111",
+                "op": "query",
+                "ns": "test.collection",
+                "client": "127.0.0.1:11111",
+                "desc": "conn111",
+                "secs_running": 5,
+                "command": {"find": "collection"},
+            },
+            {
+                "opid": "222",
+                "op": "query",
+                "ns": "test.collection",
+                "client": "127.0.0.1:22222",
+                "desc": "conn222",
+                "secs_running": 10,
+                "command": {"find": "collection"},
+            },
+        ]
+
+        app.operations_view.selected_ops = {"111", "222"}
+        app.mongodb.get_operations.return_value = operations
+
+        # First kill succeeds, second fails
+        app.mongodb.kill_operation.side_effect = [True, False]
+
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.2)
+        await pilot.click("#yes")
+        await pilot.pause(0.3)
+
+        # Should have notified about success and failure
+        notifications = [n.message for n in pilot.app._notifications]
+        assert any("Successfully killed 1 operation(s)" in msg for msg in notifications)
+        assert any("Failed to kill 1 operation(s)" in msg for msg in notifications)
+
+
+async def test_kill_selected_all_fail(app: MongoOpsManager):
+    """Test kill selected when all kill operations fail."""
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+
+        # Create operation
+        operation = {
+            "opid": "333",
+            "op": "query",
+            "ns": "test.collection",
+            "client": "127.0.0.1:33333",
+            "desc": "conn333",
+            "secs_running": 5,
+            "command": {"find": "collection"},
+        }
+
+        app.operations_view.selected_ops = {"333"}
+        app.mongodb.get_operations.return_value = [operation]
+
+        # Kill fails
+        app.mongodb.kill_operation.return_value = False
+
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.2)
+        await pilot.click("#yes")
+        await pilot.pause(0.3)
+
+        # Should have notified about failure
+        notifications = [n.message for n in pilot.app._notifications]
+        assert any("Failed to kill 1 operation(s)" in msg for msg in notifications)
+
+
+async def test_kill_selected_with_exception(app: MongoOpsManager):
+    """Test kill selected when kill_operation raises an exception."""
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+
+        # Create operation
+        operation = {
+            "opid": "444",
+            "op": "query",
+            "ns": "test.collection",
+            "client": "127.0.0.1:44444",
+            "desc": "conn444",
+            "secs_running": 5,
+            "command": {"find": "collection"},
+        }
+
+        app.operations_view.selected_ops = {"444"}
+        app.mongodb.get_operations.return_value = [operation]
+
+        # Kill raises exception
+        app.mongodb.kill_operation.side_effect = Exception("Database error")
+
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.2)
+        await pilot.click("#yes")
+        await pilot.pause(0.3)
+
+        # Should have handled the exception and shown error notification
+        notifications = [n.message for n in pilot.app._notifications]
+        error_notification = any(
+            "Failed to kill operation 444" in msg or "Database error" in msg
+            for msg in notifications
+        )
+        assert error_notification
+
+
+async def test_refresh_operations_get_operations_fails(app: MongoOpsManager):
+    """Test refresh when get_operations raises an exception."""
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+
+        # Make get_operations raise an exception
+        app.mongodb.get_operations.side_effect = Exception("Query failed")
+
+        await pilot.press("ctrl+r")
+        await pilot.pause(0.2)
+
+        # Should show error notification
+        notifications = [n.message for n in pilot.app._notifications]
+        assert any("Failed to refresh" in msg for msg in notifications)
