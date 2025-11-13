@@ -1,15 +1,14 @@
 [project]
 name = "close-mongo-ops-manager"
-version = "0.5.3"
+version = "0.5.4"
 description = "Monitor and kill MongoDB operations"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Vicenç Juan Tomàs Monserrat", email = "vicenc.monserrat@close.com" }]
 dependencies = [
-    "pymongo==4.15.3",
-    "pytest-asyncio>=1.2.0",
-    "textual>=6.0.0,<7.0.0",
+  "pymongo==4.15.3,<4.16.0",
+  "textual>=6.0.0,<7.0.0"
 ]
 keywords = [
   "mongo", "operations", "manager"
@@ -39,3 +38,25 @@ close-mongo-ops-manager = "close_mongo_ops_manager.app:main"
 [build-system]
 requires = ["uv_build>=0.9.0,<0.10.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+  "pytest>=9.0.1,<10.0.0",
+  "pytest-asyncio>=1.3.0,<2.0.0",
+]
+lint = [
+  "ruff>=0.14.4,<0.15.0",
+]
+
+[tool.pytest]
+minversion = "9.0"
+# addopts = ["-ra", "-q"]
+testpaths = [
+  "tests",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+indent-width = 4
+fix = true

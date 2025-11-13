@@ -220,7 +220,10 @@ class MongoOpsManager(App):
         """Initialize MongoDB connection and start operation monitoring."""
         try:
             self.mongodb = await MongoDBManager.connect(
-                self.connection_string, self.namespace, self.hide_system_ops, self.load_balanced
+                self.connection_string,
+                self.namespace,
+                self.hide_system_ops,
+                self.load_balanced,
             )
             # Extract connection details for status bar
             host_info = "MongoDB server"

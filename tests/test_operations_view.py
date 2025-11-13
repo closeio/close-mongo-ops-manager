@@ -60,9 +60,15 @@ async def test_clear_selections_multiple():
         await pilot.pause(0.05)
 
         # Add some rows
-        operations_view.add_row(" ", "111", "op", "query", "5s", "client1", "conn1", "user1", key="111")
-        operations_view.add_row(" ", "222", "op", "query", "10s", "client2", "conn2", "user2", key="222")
-        operations_view.add_row(" ", "333", "op", "update", "15s", "client3", "conn3", "user3", key="333")
+        operations_view.add_row(
+            " ", "111", "op", "query", "5s", "client1", "conn1", "user1", key="111"
+        )
+        operations_view.add_row(
+            " ", "222", "op", "query", "10s", "client2", "conn2", "user2", key="222"
+        )
+        operations_view.add_row(
+            " ", "333", "op", "update", "15s", "client3", "conn3", "user3", key="333"
+        )
 
         # Select multiple operations
         operations_view.selected_ops = {"111", "222", "333"}
@@ -83,7 +89,9 @@ async def test_on_key_enter_with_valid_operation():
         operations_view.current_ops = [
             {"opid": 123, "op": "query", "ns": "test.collection"}
         ]
-        operations_view.add_row(" ", "123", "op", "query", "5s", "client", "conn", "user", key="123")
+        operations_view.add_row(
+            " ", "123", "op", "query", "5s", "client", "conn", "user", key="123"
+        )
 
         # Focus the table and move cursor to first row
         operations_view.focus()

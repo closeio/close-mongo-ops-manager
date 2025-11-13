@@ -19,9 +19,14 @@ The project uses [uv](https://docs.astral.sh/uv/) for Python environment managem
 
 ### Sync Project Dependencies
 
-Install dependencies:
+Sync the project dependencies:
 ```shell
 uv sync --python 3.13
+```
+
+For development, you can use the `--all-groups` flag to install all dev dependencies
+```shell
+uv sync --python 3.13 --all-groups
 ```
 
 ### Testing

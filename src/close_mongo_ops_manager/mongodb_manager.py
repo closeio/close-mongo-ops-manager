@@ -35,7 +35,11 @@ class MongoDBManager:
 
     @classmethod
     async def connect(
-        cls, connection_string: str, namespace: str, hide_system_ops: bool = True, load_balanced: bool = False
+        cls,
+        connection_string: str,
+        namespace: str,
+        hide_system_ops: bool = True,
+        load_balanced: bool = False,
     ) -> "MongoDBManager":
         self = cls()
         try:
@@ -44,7 +48,9 @@ class MongoDBManager:
 
             # Create client
             separator = "&" if "?" in connection_string else "?"
-            conn_string = f"{connection_string}{separator}readPreference=secondaryPreferred"
+            conn_string = (
+                f"{connection_string}{separator}readPreference=secondaryPreferred"
+            )
             if load_balanced:
                 conn_string += "&loadBalanced=true"
             self.client = AsyncMongoClient(

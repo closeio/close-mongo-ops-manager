@@ -19,6 +19,11 @@ Sync the project
 uv sync --python 3.13
 ```
 
+For development, you can use the `--all-groups` flag to install all dev dependencies
+```shell
+uv sync --python 3.13 --all-groups
+```
+
 ### Testing
 
 Run tests

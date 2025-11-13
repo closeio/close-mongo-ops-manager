@@ -204,7 +204,10 @@ async def test_parse_complex_currentop_output(manager: MongoDBManager):
 
     # Verify mongos metadata
     assert "mongos" in op["clientMetadata"]
-    assert op["clientMetadata"]["mongos"]["host"] == "am11-mgo-cio1-rtr-113.closeinfra.com:27020"
+    assert (
+        op["clientMetadata"]["mongos"]["host"]
+        == "am11-mgo-cio1-rtr-113.closeinfra.com:27020"
+    )
 
     # Verify command details
     assert "command" in op

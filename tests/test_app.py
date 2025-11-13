@@ -205,7 +205,10 @@ def test_main_function(monkeypatch):
     """Test the main function of the app."""
     mock_app_run = MagicMock()
     monkeypatch.setattr("close_mongo_ops_manager.app.MongoOpsManager.run", mock_app_run)
-    monkeypatch.setattr("sys.argv", ["close-mongo-ops-manager", "--host", "localhost", "--port", "27017"])
+    monkeypatch.setattr(
+        "sys.argv",
+        ["close-mongo-ops-manager", "--host", "localhost", "--port", "27017"],
+    )
 
     main()
     mock_app_run.assert_called_once()
