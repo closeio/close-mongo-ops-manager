@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Vicenç Juan Tomàs Monserrat", email = "vicenc.monserrat@close.com" }]
 dependencies = [
-  "pymongo==4.15.3,<4.16.0",
+  "pymongo>=4.15.3,<4.16.0",
   "textual>=6.0.0,<7.0.0"
 ]
 keywords = [
