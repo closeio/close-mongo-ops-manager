@@ -127,6 +127,34 @@ async def test_kill_selected_action_with_selection(
         assert not app.operations_view.selected_ops
 
 
+async def test_kill_selected_skips_operations_missing_opid(app: MongoOpsManager):
+    """Test kill selected handles malformed operation entries gracefully."""
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+
+        app.operations_view.selected_ops = {"555"}
+        app.mongodb.get_operations.return_value = [
+            {"op": "query", "ns": "test.collection"},
+            {
+                "opid": "555",
+                "op": "query",
+                "ns": "test.collection",
+                "client": "127.0.0.1:55555",
+                "desc": "conn555",
+                "command": {"find": "collection"},
+            },
+        ]
+
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.2)
+        await pilot.click("#yes")
+        await pilot.pause(0.3)
+
+        app.mongodb.kill_operation.assert_called_with("555")
+        notifications = [n.message for n in pilot.app._notifications]
+        assert any("Successfully killed 1 operation(s)" in msg for msg in notifications)
+
+
 async def test_show_help_action(app: MongoOpsManager):
     """Test showing the help screen."""
     async with app.run_test() as pilot:

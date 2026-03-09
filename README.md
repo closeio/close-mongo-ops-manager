@@ -79,9 +79,9 @@ Space   : Select operations
 
 The mouse is enabled, so all menus are clickable.
 
-Take into account that the auto-refresh is disabled by default. If you enable it to refresh the operations automatically, when you find the operation you want to kill you need to stop it first. Then select the operation and kill it.
+Auto-refresh is enabled by default. If you need a stable view while deciding what to kill, pause refresh with `Ctrl+P`.
 
-The selected operations are not preserved between refreshes. This will improve in the future releases.
+Selected operations are preserved across refreshes while the same operation IDs are still present.
 There is also a known issue about in the filter bar that looses focus.
 
 This is the tipical usage:

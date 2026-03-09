@@ -616,11 +616,17 @@ class MongoOpsManager(App):
             try:
                 # Get operation details before killing
                 current_ops = await self.mongodb.get_operations()
-                selected_ops = [
-                    op
-                    for op in current_ops
-                    if str(op["opid"]) in self.operations_view.selected_ops
-                ]
+                selected_ops = []
+                for op in current_ops:
+                    opid = op.get("opid")
+                    if opid is None:
+                        logger.warning(
+                            "Skipping operation without opid while preparing kill details"
+                        )
+                        continue
+
+                    if str(opid) in self.operations_view.selected_ops:
+                        selected_ops.append(op)
 
                 for op in selected_ops:
                     command = op.get("command", {})
@@ -631,7 +637,7 @@ class MongoOpsManager(App):
                         "client": op.get("client"),
                     }
                     logger.info(
-                        f"Preparing to kill operation {op['opid']}. Query details: {query_info}"
+                        f"Preparing to kill operation {op.get('opid')}. Query details: {query_info}"
                     )
 
                 success_count = 0

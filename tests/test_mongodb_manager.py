@@ -68,6 +68,36 @@ async def test_get_operations_with_filters(manager: MongoDBManager):
     assert "$match" in manager.admin_db.aggregate.call_args[0][0][1]
 
 
+async def test_get_operations_applies_system_filter_without_other_filters(
+    manager: MongoDBManager,
+):
+    """Test hide_system_ops filter is always applied when enabled."""
+    manager.namespace = ""
+    manager.hide_system_ops = True
+
+    await manager.get_operations()
+
+    pipeline = manager.admin_db.aggregate.call_args[0][0]
+    match_stage = next(stage["$match"] for stage in pipeline if "$match" in stage)
+    assert any("$nor" in condition for condition in match_stage["$and"])
+
+
+async def test_get_operations_opid_filter_uses_string_conversion(
+    manager: MongoDBManager,
+):
+    """Test opid filtering supports numeric opids by converting opid to string."""
+    manager.admin_db.aggregate.reset_mock()
+    await manager.get_operations({"opid": "123"})
+
+    pipeline = manager.admin_db.aggregate.call_args[0][0]
+    match_stage = next(stage["$match"] for stage in pipeline if "$match" in stage)
+    opid_filter = next(
+        condition for condition in match_stage["$and"] if "$expr" in condition
+    )
+
+    assert opid_filter["$expr"]["$regexMatch"]["input"] == {"$toString": "$opid"}
+
+
 async def test_kill_operation_success(manager: MongoDBManager):
     """Test successful killing of an operation."""
     manager.admin_db.command = AsyncMock(return_value={"ok": 1})
@@ -105,6 +135,23 @@ async def test_operation_exists(manager: MongoDBManager):
     """Test checking if an operation exists."""
     manager.admin_db.aggregate.return_value.to_list.return_value = [{"opid": "123"}]
     assert await manager._operation_exists("123") is True
+
+
+async def test_build_opid_match_handles_numeric_and_sharded_opids(
+    manager: MongoDBManager,
+):
+    """Test opid match builder includes string and numeric variants."""
+    numeric_match = manager._build_opid_match("123")
+    sharded_match = manager._build_opid_match("shard-0:456")
+
+    assert numeric_match == {"$or": [{"opid": {"$eq": "123"}}, {"opid": {"$eq": 123}}]}
+    assert sharded_match == {
+        "$or": [
+            {"opid": {"$eq": "shard-0:456"}},
+            {"opid": {"$eq": "456"}},
+            {"opid": {"$eq": 456}},
+        ]
+    }
 
 
 async def test_operation_does_not_exist(manager: MongoDBManager):
@@ -362,7 +409,7 @@ async def test_filter_multiple_criteria_combined(manager: MongoDBManager):
     assert len(and_conditions) >= 2
 
     # Verify specific filter conditions exist
-    has_opid = any("opid" in cond for cond in and_conditions)
+    has_opid = any("$expr" in cond for cond in and_conditions)
     has_op = any("op" in cond for cond in and_conditions)
     has_client = any(
         "$or" in cond and any("client" in or_cond for or_cond in cond["$or"])

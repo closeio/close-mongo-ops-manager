@@ -1,6 +1,9 @@
 import json
+import logging
 from pathlib import Path
 from .theme_manager import ThemeConfig
+
+logger = logging.getLogger("mongo_ops_manager")
 
 
 class ConfigManager:
@@ -26,9 +29,8 @@ class ConfigManager:
                         current_theme=theme_data.get("current_theme", "textual-dark"),
                         available_themes=theme_data.get("available_themes"),
                     )
-        except Exception:
-            # Log error but don't crash - use defaults
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to load theme config from {self.config_file}: {e}")
         return ThemeConfig()
 
     def save_theme_config(self, theme_config: ThemeConfig) -> None:
@@ -46,6 +48,5 @@ class ConfigManager:
 
             with open(self.config_file, "w") as f:
                 json.dump(config_data, f, indent=2)
-        except Exception:
-            # Log error but don't crash application
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to save theme config to {self.config_file}: {e}")

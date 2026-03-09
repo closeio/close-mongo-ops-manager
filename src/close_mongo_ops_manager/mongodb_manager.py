@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 from typing import Any
 
@@ -93,95 +94,98 @@ class MongoDBManager:
 
             pipeline = [{"$currentOp": current_op_args}]
 
-            if filters or self.namespace:
-                match_stage: dict[str, Any] = {"$and": []}
+            match_stage: dict[str, Any] = {"$and": []}
 
-                # Add system operations filter
-                if self.hide_system_ops:
+            # Add system operations filter, regardless of namespace/filter settings.
+            if self.hide_system_ops:
+                match_stage["$and"].append(
+                    {
+                        "$nor": [
+                            {"ns": {"$regex": "^admin\\.", "$options": "i"}},
+                            {"ns": {"$regex": "^config\\.", "$options": "i"}},
+                            {"ns": {"$regex": "^local\\.", "$options": "i"}},
+                            {"op": "none"},  # Filter out no-op operations
+                            {"effectiveUsers.user": "__system"},  # exclude system users
+                        ]
+                    }
+                )
+
+            if self.namespace:
+                match_stage["$and"].append(
+                    {"ns": {"$regex": f"^{self.namespace}", "$options": "i"}}
+                )
+
+            if filters:
+                if filters.get("opid"):
+                    escaped_opid = re.escape(filters["opid"])
                     match_stage["$and"].append(
                         {
-                            "$nor": [
-                                {"ns": {"$regex": "^admin\\.", "$options": "i"}},
-                                {"ns": {"$regex": "^config\\.", "$options": "i"}},
-                                {"ns": {"$regex": "^local\\.", "$options": "i"}},
-                                {"op": "none"},  # Filter out no-op operations
+                            "$expr": {
+                                "$regexMatch": {
+                                    "input": {"$toString": "$opid"},
+                                    "regex": escaped_opid,
+                                    "options": "i",
+                                }
+                            }
+                        }
+                    )
+                if filters.get("operation"):
+                    match_stage["$and"].append(
+                        {
+                            "op": {
+                                "$regex": filters["operation"],
+                                "$options": "i",
+                            }
+                        }
+                    )
+                if filters.get("client"):
+                    match_stage["$and"].append(
+                        {
+                            "$or": [
                                 {
-                                    "effectiveUsers.user": "__system"
-                                },  # exclude system users
+                                    "client": {
+                                        "$regex": filters["client"],
+                                        "$options": "i",
+                                    }
+                                },
+                                {
+                                    "client_s": {
+                                        "$regex": filters["client"],
+                                        "$options": "i",
+                                    }
+                                },
                             ]
                         }
                     )
-
-                if self.namespace:
+                if filters.get("description"):
                     match_stage["$and"].append(
-                        {"ns": {"$regex": f"^{self.namespace}", "$options": "i"}}
+                        {
+                            "desc": {
+                                "$regex": filters["description"],
+                                "$options": "i",
+                            }
+                        }
                     )
-
-                if filters:
-                    if filters.get("opid"):
-                        match_stage["$and"].append(
-                            {"opid": {"$regex": filters["opid"], "$options": "i"}}
-                        )
-                    if filters.get("operation"):
-                        match_stage["$and"].append(
-                            {
-                                "op": {
-                                    "$regex": filters["operation"],
-                                    "$options": "i",
-                                }
-                            }
-                        )
-                    if filters.get("client"):
-                        match_stage["$and"].append(
-                            {
-                                "$or": [
-                                    {
-                                        "client": {
-                                            "$regex": filters["client"],
-                                            "$options": "i",
-                                        }
-                                    },
-                                    {
-                                        "client_s": {
-                                            "$regex": filters["client"],
-                                            "$options": "i",
-                                        }
-                                    },
-                                ]
-                            }
-                        )
-                    if filters.get("description"):
-                        match_stage["$and"].append(
-                            {
-                                "desc": {
-                                    "$regex": filters["description"],
-                                    "$options": "i",
-                                }
-                            }
-                        )
-                    if filters.get("effective_users"):
-                        match_stage["$and"].append(
-                            {
-                                "effectiveUsers": {
-                                    "$elemMatch": {
-                                        "user": {
-                                            "$regex": filters["effective_users"],
-                                            "$options": "i",
-                                        }
+                if filters.get("effective_users"):
+                    match_stage["$and"].append(
+                        {
+                            "effectiveUsers": {
+                                "$elemMatch": {
+                                    "user": {
+                                        "$regex": filters["effective_users"],
+                                        "$options": "i",
                                     }
                                 }
                             }
-                        )
-                    if (
-                        filters.get("running_time")
-                        and filters["running_time"].isdigit()
-                    ):
-                        match_stage["$and"].append(
-                            {"secs_running": {"$gte": int(filters["running_time"])}}
-                        )
+                        }
+                    )
+                if filters.get("running_time") and filters["running_time"].isdigit():
+                    match_stage["$and"].append(
+                        {"secs_running": {"$gte": int(filters["running_time"])}}
+                    )
 
-                if match_stage["$and"]:
-                    pipeline.append({"$match": match_stage})
+            if match_stage["$and"]:
+                pipeline.append({"$match": match_stage})
 
             # Project only the fields we need to reduce data transfer
             pipeline.append(
@@ -223,12 +227,40 @@ class MongoDBManager:
         except PyMongoError as e:
             raise OperationError(f"Failed to get operations: {e}")
 
+    def _build_opid_match(self, opid: str) -> dict[str, Any]:
+        """Build a resilient match condition for opid values with mixed types."""
+        candidates: list[Any] = []
+
+        normalized_opid = opid.strip()
+        if normalized_opid:
+            candidates.append(normalized_opid)
+
+        if normalized_opid.isdigit():
+            candidates.append(int(normalized_opid))
+
+        if ":" in normalized_opid:
+            numeric_part = normalized_opid.rsplit(":", maxsplit=1)[-1]
+            if numeric_part.isdigit():
+                candidates.append(numeric_part)
+                candidates.append(int(numeric_part))
+
+        deduped_candidates = list(dict.fromkeys(candidates))
+        if not deduped_candidates:
+            return {"opid": {"$eq": normalized_opid}}
+
+        if len(deduped_candidates) == 1:
+            return {"opid": {"$eq": deduped_candidates[0]}}
+
+        return {
+            "$or": [{"opid": {"$eq": candidate}} for candidate in deduped_candidates]
+        }
+
     async def _operation_exists(self, opid: str) -> bool:
         """Check if operation still exists with minimal query."""
         try:
             pipeline = [
                 {"$currentOp": {"allUsers": True}},
-                {"$match": {"opid": {"$eq": str(opid)}}},
+                {"$match": self._build_opid_match(opid)},
                 {"$project": {"_id": 0, "opid": 1}},
                 {"$limit": 1},
             ]
@@ -247,7 +279,8 @@ class MongoDBManager:
         self, opid: str, max_retries: int = 2, verify_timeout: float = 5.0
     ) -> bool:
         """Kill a MongoDB operation with retries and verification."""
-        if not opid or opid.strip() == "":
+        normalized_opid = opid.strip() if isinstance(opid, str) else str(opid)
+        if not normalized_opid:
             logger.error("Cannot kill operation with empty opid")
             return False
 
@@ -264,17 +297,15 @@ class MongoDBManager:
 
         try:
             # Convert string opid to numeric if possible (for non-sharded operations)
-            use_opid = opid
-            if isinstance(opid, str):
-                opid = opid.strip()
-                if ":" not in opid and opid.isdigit():
-                    try:
-                        numeric_opid = int(opid)
-                        if numeric_opid > 0:  # Ensure it's a valid positive number
-                            use_opid = numeric_opid
-                    except (ValueError, OverflowError) as e:
-                        logger.warning(f"Failed to convert opid to numeric: {e}")
-                        use_opid = opid
+            use_opid: str | int = normalized_opid
+            if ":" not in normalized_opid and normalized_opid.isdigit():
+                try:
+                    numeric_opid = int(normalized_opid)
+                    if numeric_opid > 0:  # Ensure it's a valid positive number
+                        use_opid = numeric_opid
+                except (ValueError, OverflowError) as e:
+                    logger.warning(f"Failed to convert opid to numeric: {e}")
+                    use_opid = normalized_opid
 
             # Try killing the operation with retries
             for attempt in range(max_retries):
@@ -288,11 +319,13 @@ class MongoDBManager:
 
                         while time.monotonic() - verification_start < verify_timeout:
                             # Check if operation still exists
-                            operation_exists = await self._operation_exists(opid)
+                            operation_exists = await self._operation_exists(
+                                normalized_opid
+                            )
 
                             if not operation_exists:
                                 logger.info(
-                                    f"Successfully killed and verified operation {opid}"
+                                    f"Successfully killed and verified operation {normalized_opid}"
                                 )
                                 return True
 
@@ -301,7 +334,7 @@ class MongoDBManager:
 
                         # If we reach here, operation still exists after timeout
                         logger.warning(
-                            f"Operation {opid} still exists after kill attempt {attempt + 1}"
+                            f"Operation {normalized_opid} still exists after kill attempt {attempt + 1}"
                         )
                         if attempt < max_retries - 1:
                             # Wait before retry, with exponential backoff (capped at 10 seconds)
@@ -312,12 +345,14 @@ class MongoDBManager:
                     # Special handling for sharded cluster operations
                     if (
                         "TypeMismatch" in str(e)
-                        and isinstance(opid, str)
-                        and ":" in opid
+                        and isinstance(normalized_opid, str)
+                        and ":" in normalized_opid
                     ):
                         try:
                             # For sharded operations, try to extract and kill the numeric part
-                            shard_id, numeric_part = opid.split(":")
+                            _shard_id, numeric_part = normalized_opid.split(
+                                ":", maxsplit=1
+                            )
                             if numeric_part.isdigit():
                                 logger.info(
                                     f"Retrying kill with numeric part of sharded operation: {numeric_part}"
@@ -334,7 +369,7 @@ class MongoDBManager:
 
                     # Log the error and continue retrying if attempts remain
                     logger.error(
-                        f"Attempt {attempt + 1} failed to kill operation {opid}: {e}",
+                        f"Attempt {attempt + 1} failed to kill operation {normalized_opid}: {e}",
                         exc_info=True,
                     )
                     if attempt < max_retries - 1:
@@ -342,17 +377,18 @@ class MongoDBManager:
                         continue
                     else:
                         raise OperationError(
-                            f"Failed to kill operation {opid} after {max_retries} attempts: {e}"
+                            f"Failed to kill operation {normalized_opid} after {max_retries} attempts: {e}"
                         )
 
             # If we reach here, all attempts failed
             logger.error(
-                f"Failed to kill operation {opid} after {max_retries} attempts"
+                f"Failed to kill operation {normalized_opid} after {max_retries} attempts"
             )
             return False
 
         except Exception as e:
             logger.error(
-                f"Unexpected error killing operation {opid}: {e}", exc_info=True
+                f"Unexpected error killing operation {normalized_opid}: {e}",
+                exc_info=True,
             )
-            raise OperationError(f"Failed to kill operation {opid}: {e}")
+            raise OperationError(f"Failed to kill operation {normalized_opid}: {e}")
