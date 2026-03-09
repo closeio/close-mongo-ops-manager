@@ -1,3 +1,5 @@
+import logging
+
 from textual.binding import Binding
 from textual.app import ComposeResult
 from textual.containers import (
@@ -7,6 +9,8 @@ from textual.containers import (
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Static
 from textual.timer import Timer
+
+logger = logging.getLogger("mongo_ops_manager")
 
 
 class LogScreen(ModalScreen):
@@ -106,7 +110,8 @@ class LogScreen(ModalScreen):
 
             try:
                 log_text = self.query_one("#log-text", Static)
-            except Exception:
+            except Exception as inner_e:
+                logger.debug(f"Failed to query log-text widget: {inner_e}")
                 return
 
             log_text.update(error_content)

@@ -1,11 +1,8 @@
 from textual.binding import Binding
 from textual.app import ComposeResult
-from textual.containers import (
-    VerticalScroll,
-)
+from textual.containers import ScrollableContainer, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import TextArea
-from textual.containers import ScrollableContainer
 
 
 class OperationDetailsScreen(ModalScreen):

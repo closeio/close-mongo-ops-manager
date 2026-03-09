@@ -50,6 +50,7 @@ The application supports these command line options:
 - `--port`: MongoDB port (default: 27017 or MONGODB_PORT env var)
 - `--username`: MongoDB username (or MONGODB_USERNAME env var)
 - `--password`: MongoDB password (or MONGODB_PASSWORD env var)
+- `--auth-source`: MongoDB authentication database (default: admin or MONGODB_AUTH_SOURCE env var)
 - `--namespace`: MongoDB namespace to monitor (default: ".*")
 - `--refresh-interval`: Refresh interval in seconds (default: 2, min: 1, max: 10)
 - `--show-system-ops`: Show system operations (disabled by default)
@@ -82,9 +83,9 @@ The mouse is enabled, so all menus are clickable.
 Auto-refresh is enabled by default. If you need a stable view while deciding what to kill, pause refresh with `Ctrl+P`.
 
 Selected operations are preserved across refreshes while the same operation IDs are still present.
-There is also a known issue about in the filter bar that looses focus.
+There is also a known issue where the filter bar loses focus.
 
-This is the tipical usage:
+This is the typical usage:
 
 - Use arrow keys or mouse to navigate
 - Space/Click to select operations

@@ -13,7 +13,7 @@ from textual import work
 from textual.binding import Binding
 from textual.app import App, ComposeResult
 from textual.reactive import reactive
-from textual.widgets import DataTable, Footer, Header, Input
+from textual.widgets import DataTable, Footer, Header
 from textual.coordinate import Coordinate
 from textual.containers import VerticalScroll
 
@@ -272,7 +272,8 @@ class MongoOpsManager(App):
         new_interval = MongoOpsManager.validate_refresh_interval(new_interval)
         if new_interval != self.refresh_interval:
             self.refresh_interval = new_interval
-            self._status_bar.set_refresh_interval(self.refresh_interval)
+            if self._status_bar:
+                self._status_bar.set_refresh_interval(self.refresh_interval)
 
     def action_decrease_refresh(self) -> None:
         """Decrease the refresh interval."""
@@ -280,7 +281,8 @@ class MongoOpsManager(App):
         new_interval = MongoOpsManager.validate_refresh_interval(new_interval)
         if new_interval != self.refresh_interval:
             self.refresh_interval = new_interval
-            self._status_bar.set_refresh_interval(self.refresh_interval)
+            if self._status_bar:
+                self._status_bar.set_refresh_interval(self.refresh_interval)
 
     async def auto_refreshing(self) -> None:
         """Background task for auto-refreshing functionality."""
@@ -505,7 +507,8 @@ class MongoOpsManager(App):
     def action_toggle_refresh(self) -> None:
         """Toggle auto-refresh."""
         self.auto_refresh = not self.auto_refresh
-        self._status_bar.set_refresh_status(self.auto_refresh)
+        if self._status_bar:
+            self._status_bar.set_refresh_status(self.auto_refresh)
 
     def action_toggle_filter_bar(self) -> None:
         """Toggle filter bar visibility."""
@@ -528,9 +531,9 @@ class MongoOpsManager(App):
     def _focus_first_filter_input(self) -> None:
         """Helper to focus the first filter input."""
         filter_bar = self.query_one(FilterBar)
-        first_input = filter_bar.query_one(".filter-input", expect_type=Input)
-        if first_input:
-            first_input.focus()
+        filter_inputs = filter_bar.query(".filter-input")
+        if filter_inputs:
+            filter_inputs.first().focus()
 
     def action_deselect_all(self) -> None:
         """Deselect all selected operations."""
@@ -541,7 +544,8 @@ class MongoOpsManager(App):
         self.operations_view.selected_ops.clear()
 
         # Update StatusBar with selected count (zero)
-        self._status_bar.set_selected_count(0)
+        if self._status_bar:
+            self._status_bar.set_selected_count(0)
 
         # Emit message about selection change
         self.operations_view.post_message(SelectionChanged(count=0))
@@ -572,7 +576,8 @@ class MongoOpsManager(App):
 
         # Update StatusBar with selected count
         count = len(self.operations_view.selected_ops)
-        self._status_bar.set_selected_count(count)
+        if self._status_bar:
+            self._status_bar.set_selected_count(count)
 
         # Emit message about selection change
         self.operations_view.post_message(SelectionChanged(count=count))
@@ -593,7 +598,10 @@ class MongoOpsManager(App):
                 self.operations_view.update_cell_at(coord, "✓")
 
             # Update StatusBar with selected count
-            self._status_bar.set_selected_count(len(self.operations_view.selected_ops))
+            if self._status_bar:
+                self._status_bar.set_selected_count(
+                    len(self.operations_view.selected_ops)
+                )
             # Emit message about selection change
             self.operations_view.post_message(
                 SelectionChanged(count=len(self.operations_view.selected_ops))
@@ -666,7 +674,8 @@ class MongoOpsManager(App):
                 self.operations_view.clear_selections()
 
                 # Force update the status bar immediately
-                self._status_bar.set_selected_count(0)
+                if self._status_bar:
+                    self._status_bar.set_selected_count(0)
 
                 # Refresh the view
                 self.refresh_operations()
@@ -712,7 +721,8 @@ class MongoOpsManager(App):
 
     def on_selection_changed(self, event: SelectionChanged) -> None:
         """Handle selection changed event."""
-        self._status_bar.set_selected_count(event.count)
+        if self._status_bar:
+            self._status_bar.set_selected_count(event.count)
 
     async def on_unmount(self) -> None:
         """Clean up resources when the application exits."""
@@ -773,7 +783,7 @@ def main() -> None:
         help="MongoDB authentication database (default: admin)",
     )
     parser.add_argument(
-        "--namespace", help="MongoDB namespace to monitor", type=str, default=".*"
+        "--namespace", help="MongoDB namespace to monitor", type=str, default=""
     )
     parser.add_argument(
         "--refresh-interval",

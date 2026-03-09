@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from textual.theme import Theme
 
 
@@ -7,7 +7,7 @@ class ThemeConfig:
     """Configuration for theme preferences."""
 
     current_theme: str = "textual-dark"
-    available_themes: list[str] = None
+    available_themes: list[str] | None = field(default=None)
 
     def __post_init__(self):
         if self.available_themes is None:

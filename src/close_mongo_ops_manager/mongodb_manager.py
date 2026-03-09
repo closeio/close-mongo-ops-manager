@@ -112,7 +112,7 @@ class MongoDBManager:
 
             if self.namespace:
                 match_stage["$and"].append(
-                    {"ns": {"$regex": f"^{self.namespace}", "$options": "i"}}
+                    {"ns": {"$regex": f"^{re.escape(self.namespace)}", "$options": "i"}}
                 )
 
             if filters:
@@ -133,24 +133,25 @@ class MongoDBManager:
                     match_stage["$and"].append(
                         {
                             "op": {
-                                "$regex": filters["operation"],
+                                "$regex": re.escape(filters["operation"]),
                                 "$options": "i",
                             }
                         }
                     )
                 if filters.get("client"):
+                    escaped_client = re.escape(filters["client"])
                     match_stage["$and"].append(
                         {
                             "$or": [
                                 {
                                     "client": {
-                                        "$regex": filters["client"],
+                                        "$regex": escaped_client,
                                         "$options": "i",
                                     }
                                 },
                                 {
                                     "client_s": {
-                                        "$regex": filters["client"],
+                                        "$regex": escaped_client,
                                         "$options": "i",
                                     }
                                 },
@@ -161,7 +162,7 @@ class MongoDBManager:
                     match_stage["$and"].append(
                         {
                             "desc": {
-                                "$regex": filters["description"],
+                                "$regex": re.escape(filters["description"]),
                                 "$options": "i",
                             }
                         }
@@ -172,7 +173,7 @@ class MongoDBManager:
                             "effectiveUsers": {
                                 "$elemMatch": {
                                     "user": {
-                                        "$regex": filters["effective_users"],
+                                        "$regex": re.escape(filters["effective_users"]),
                                         "$options": "i",
                                     }
                                 }
@@ -343,11 +344,7 @@ class MongoDBManager:
 
                 except PyMongoError as e:
                     # Special handling for sharded cluster operations
-                    if (
-                        "TypeMismatch" in str(e)
-                        and isinstance(normalized_opid, str)
-                        and ":" in normalized_opid
-                    ):
+                    if "TypeMismatch" in str(e) and ":" in normalized_opid:
                         try:
                             # For sharded operations, try to extract and kill the numeric part
                             _shard_id, numeric_part = normalized_opid.split(

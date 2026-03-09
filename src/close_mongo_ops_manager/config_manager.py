@@ -29,7 +29,7 @@ class ConfigManager:
                         current_theme=theme_data.get("current_theme", "textual-dark"),
                         available_themes=theme_data.get("available_themes"),
                     )
-        except Exception as e:
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as e:
             logger.warning(f"Failed to load theme config from {self.config_file}: {e}")
         return ThemeConfig()
 
@@ -48,5 +48,5 @@ class ConfigManager:
 
             with open(self.config_file, "w") as f:
                 json.dump(config_data, f, indent=2)
-        except Exception as e:
+        except (OSError, json.JSONDecodeError, TypeError) as e:
             logger.warning(f"Failed to save theme config to {self.config_file}: {e}")
