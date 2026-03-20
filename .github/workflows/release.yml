@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -34,7 +34,7 @@ jobs:
 
   publish:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: pypi
       url: https://pypi.org/p/close-mongo-ops-manager
@@ -50,7 +50,7 @@ jobs:
 
   github-release:
     needs: publish
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
