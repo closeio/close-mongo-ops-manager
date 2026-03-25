@@ -452,3 +452,89 @@ async def test_refresh_operations_get_operations_fails(app: MongoOpsManager):
         # Should show error notification
         notifications = [n.message for n in pilot.app._notifications]
         assert any("Failed to refresh" in msg for msg in notifications)
+
+
+def test_validate_refresh_interval_clamps_low():
+    """Test that refresh interval below minimum is clamped."""
+    assert MongoOpsManager.validate_refresh_interval(0) == 1
+    assert MongoOpsManager.validate_refresh_interval(-5) == 1
+
+
+def test_validate_refresh_interval_clamps_high():
+    """Test that refresh interval above maximum is clamped."""
+    assert MongoOpsManager.validate_refresh_interval(100) == 10
+    assert MongoOpsManager.validate_refresh_interval(11) == 10
+
+
+def test_validate_refresh_interval_valid_range():
+    """Test that values within range are returned unchanged."""
+    assert MongoOpsManager.validate_refresh_interval(1) == 1
+    assert MongoOpsManager.validate_refresh_interval(5) == 5
+    assert MongoOpsManager.validate_refresh_interval(10) == 10
+
+
+def test_main_builds_auth_connection_string(monkeypatch):
+    """Test main() builds authenticated connection string from args."""
+    mock_app_instance = MagicMock()
+    mock_app_class = MagicMock(return_value=mock_app_instance)
+    monkeypatch.setattr("close_mongo_ops_manager.app.MongoOpsManager", mock_app_class)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "close-mongo-ops-manager",
+            "--host",
+            "db.example.com",
+            "--port",
+            "27018",
+            "--username",
+            "admin",
+            "--password",
+            "secret",
+            "--auth-source",
+            "authdb",
+        ],
+    )
+
+    main()
+    call_kwargs = mock_app_class.call_args[1]
+    assert "admin" in call_kwargs["connection_string"]
+    assert "secret" in call_kwargs["connection_string"]
+    assert "db.example.com:27018" in call_kwargs["connection_string"]
+    assert "authSource=authdb" in call_kwargs["connection_string"]
+
+
+def test_main_builds_no_auth_connection_string(monkeypatch):
+    """Test main() builds unauthenticated connection string when no credentials."""
+    mock_app_instance = MagicMock()
+    mock_app_class = MagicMock(return_value=mock_app_instance)
+    monkeypatch.setattr("close_mongo_ops_manager.app.MongoOpsManager", mock_app_class)
+    # Clear any env vars that might provide credentials
+    monkeypatch.delenv("MONGODB_USERNAME", raising=False)
+    monkeypatch.delenv("MONGODB_PASSWORD", raising=False)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["close-mongo-ops-manager", "--host", "localhost", "--port", "27017"],
+    )
+
+    main()
+    call_kwargs = mock_app_class.call_args[1]
+    assert call_kwargs["connection_string"] == "mongodb://localhost:27017/"
+
+
+def test_main_clamps_refresh_interval(monkeypatch):
+    """Test main() clamps out-of-range refresh interval."""
+    mock_app_instance = MagicMock()
+    mock_app_class = MagicMock(return_value=mock_app_instance)
+    # Preserve the real validate_refresh_interval static method
+    mock_app_class.validate_refresh_interval = MongoOpsManager.validate_refresh_interval
+    monkeypatch.setattr("close_mongo_ops_manager.app.MongoOpsManager", mock_app_class)
+    monkeypatch.delenv("MONGODB_USERNAME", raising=False)
+    monkeypatch.delenv("MONGODB_PASSWORD", raising=False)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["close-mongo-ops-manager", "--refresh-interval", "999"],
+    )
+
+    main()
+    call_kwargs = mock_app_class.call_args[1]
+    assert call_kwargs["refresh_interval"] == 10
