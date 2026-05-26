@@ -22,6 +22,27 @@ class MongoDBManager:
         self.admin_db: AsyncDatabase | None = None
         self.namespace: str = ""
         self.hide_system_ops: bool = True
+        # (major, minor) — populated on connect; (0, 0) means unknown so we
+        # fall back to the most conservative feature set.
+        self.server_version: tuple[int, int] = (0, 0)
+
+    @staticmethod
+    def _parse_server_version(version: str) -> tuple[int, int]:
+        """Parse "X.Y[.Z][-suffix]" → (X, Y). Returns (0, 0) on failure."""
+        if not isinstance(version, str):
+            return (0, 0)
+        head = version.split("-", 1)[0]
+        parts = head.split(".")
+        try:
+            major = int(parts[0])
+            minor = int(parts[1]) if len(parts) > 1 else 0
+        except (ValueError, IndexError):
+            return (0, 0)
+        return (major, minor)
+
+    def _supports_truncate_ops(self) -> bool:
+        """truncateOps was added in MongoDB 7.1; ship it on 7.1+ and 8.x+."""
+        return self.server_version >= (7, 1)
 
     async def close(self) -> None:
         """Close all MongoDB connections properly."""
@@ -69,7 +90,11 @@ class MongoDBManager:
             server_status = await self.admin_db.command("serverStatus")
             version = server_status.get("version", "unknown version")
             process = server_status.get("process", "unknown process")
-            logger.info(f"Connected to MongoDB {version} ({process})")
+            self.server_version = self._parse_server_version(version)
+            logger.info(
+                f"Connected to MongoDB {version} ({process}); "
+                f"parsed version {self.server_version}"
+            )
 
             return self
         except PyMongoError as e:
@@ -82,8 +107,11 @@ class MongoDBManager:
             return []
 
         try:
-            # Base currentOp arguments
-            current_op_args = {
+            # Base $currentOp arguments. truncateOps (7.1+) lets the server
+            # cap oversized command/originatingCommand payloads so a single
+            # bulk op can't flood the TUI. MongoDB 7.0 rejects unknown
+            # fields, so it's gated on server version.
+            current_op_args: dict[str, Any] = {
                 "allUsers": True,
                 "idleConnections": False,
                 "idleCursors": False,
@@ -91,6 +119,8 @@ class MongoDBManager:
                 "localOps": False,
                 "backtrace": False,
             }
+            if self._supports_truncate_ops():
+                current_op_args["truncateOps"] = True
 
             pipeline = [{"$currentOp": current_op_args}]
 
@@ -188,7 +218,10 @@ class MongoDBManager:
             if match_stage["$and"]:
                 pipeline.append({"$match": match_stage})
 
-            # Project only the fields we need to reduce data transfer
+            # Project only the fields we need to reduce data transfer.
+            # The MongoDB 8.0 group adds queryFramework, cursor, progress,
+            # msg, numYields, appName, host, connectionId, write/prepare
+            # conflicts, throughput, twoPhaseCommitCoordinator, and shard.
             pipeline.append(
                 {
                     "$project": {
@@ -199,18 +232,32 @@ class MongoDBManager:
                         "client": 1,
                         "client_s": 1,
                         "clientMetadata.mongos.host": 1,
+                        "appName": 1,
+                        "host": 1,
+                        "connectionId": 1,
                         "desc": 1,
                         "effectiveUsers": 1,
                         "active": 1,
                         "ns": 1,
                         "command": 1,
                         "planSummary": 1,
+                        "queryFramework": 1,
+                        "cursor": 1,
+                        "progress": 1,
+                        "msg": 1,
+                        "numYields": 1,
                         "currentOpTime": 1,
                         "microsecs_running": 1,
                         "killPending": 1,
                         "WiredTigerTxn": 1,
                         "lsid": 1,
                         "transaction": 1,
+                        "prepareReadConflicts": 1,
+                        "writeConflicts": 1,
+                        "dataThroughputLastSecond": 1,
+                        "dataThroughputAverage": 1,
+                        "twoPhaseCommitCoordinator": 1,
+                        "shard": 1,
                         "locks": 1,
                         "waitingForLock": 1,
                         "lockStats": 1,
