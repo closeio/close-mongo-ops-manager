@@ -96,6 +96,62 @@ async def test_details_missing_fields_show_fallback():
         assert "Namespace: N/A" in content
 
 
+async def test_details_displays_mongodb_8_fields():
+    """MongoDB 8.0 fields should render when present."""
+    op = {
+        "opid": 42,
+        "op": "getmore",
+        "ns": "test.col",
+        "secs_running": 3,
+        "microsecs_running": 3_456_789,
+        "client": "10.0.0.1:5000",
+        "appName": "ETL-runner",
+        "host": "shard-0:27017",
+        "connectionId": 88,
+        "numYields": 7,
+        "queryFramework": "sbe",
+        "msg": "Index Build: scanning collection",
+        "progress": {"done": 250, "total": 1000},
+        "writeConflicts": 4,
+        "dataThroughputLastSecond": 1024,
+        "dataThroughputAverage": 2048,
+        "shard": "shard-0",
+        "cursor": {
+            "cursorId": 99,
+            "nDocsReturned": 500,
+            "tailable": False,
+        },
+        "transaction": {
+            "parameters": {
+                "txnNumber": 5,
+                "autocommit": False,
+                "readConcern": {"level": "snapshot"},
+            },
+            "timeOpenMicros": 12345,
+        },
+        "command": {"getMore": 99, "collection": "col"},
+    }
+    app = DetailsTestApp(op)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        content = app.screen.query_one(TextArea).text
+
+    assert "App Name: ETL-runner" in content
+    assert "Server: shard-0:27017 (conn 88)" in content
+    assert "Num Yields: 7" in content
+    assert "Query Framework: sbe" in content
+    assert "Status: Index Build: scanning collection" in content
+    assert "Progress: 250/1000 (25.0%)" in content
+    assert "Write Conflicts: 4" in content
+    assert "Throughput: last=1024 avg=2048 bytes/s" in content
+    assert "Shard: shard-0" in content
+    assert "Cursor:" in content
+    assert "cursorId: 99" in content
+    assert "Transaction:" in content
+    assert "txnNumber: 5" in content
+    assert "readConcern.level: snapshot" in content
+
+
 async def test_details_escape_dismisses():
     """Test that pressing Escape dismisses the details screen."""
     op = {"opid": 1, "op": "query", "ns": "test.col"}

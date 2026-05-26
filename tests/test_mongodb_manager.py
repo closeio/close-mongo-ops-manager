@@ -543,6 +543,100 @@ async def test_operation_exists_unexpected_error(manager: MongoDBManager):
     assert result is False
 
 
+async def test_get_operations_uses_truncate_ops_on_8_0(manager: MongoDBManager):
+    """$currentOp should request truncated commands on MongoDB 8.0."""
+    manager.server_version = (8, 0)
+    await manager.get_operations()
+    pipeline = manager.admin_db.aggregate.call_args[0][0]
+    current_op_stage = next(stage for stage in pipeline if "$currentOp" in stage)
+    assert current_op_stage["$currentOp"]["truncateOps"] is True
+
+
+async def test_get_operations_uses_truncate_ops_on_7_1(manager: MongoDBManager):
+    """truncateOps was introduced in 7.1 — include it on 7.1+."""
+    manager.server_version = (7, 1)
+    await manager.get_operations()
+    pipeline = manager.admin_db.aggregate.call_args[0][0]
+    current_op_stage = next(stage for stage in pipeline if "$currentOp" in stage)
+    assert current_op_stage["$currentOp"].get("truncateOps") is True
+
+
+async def test_get_operations_omits_truncate_ops_on_7_0(manager: MongoDBManager):
+    """MongoDB 7.0 rejects unknown fields — truncateOps must be absent."""
+    manager.server_version = (7, 0)
+    await manager.get_operations()
+    pipeline = manager.admin_db.aggregate.call_args[0][0]
+    current_op_stage = next(stage for stage in pipeline if "$currentOp" in stage)
+    assert "truncateOps" not in current_op_stage["$currentOp"]
+
+
+async def test_get_operations_omits_truncate_ops_when_version_unknown(
+    manager: MongoDBManager,
+):
+    """Unknown server version (parse failure) must fall back to safe behavior."""
+    manager.server_version = (0, 0)
+    await manager.get_operations()
+    pipeline = manager.admin_db.aggregate.call_args[0][0]
+    current_op_stage = next(stage for stage in pipeline if "$currentOp" in stage)
+    assert "truncateOps" not in current_op_stage["$currentOp"]
+
+
+def test_parse_server_version_handles_variants():
+    """Server version parsing tolerates patch suffixes, rc tags, and garbage."""
+    parse = MongoDBManager._parse_server_version
+    assert parse("8.0.4") == (8, 0)
+    assert parse("7.0.18-11") == (7, 0)
+    assert parse("7.1.0-rc1") == (7, 1)
+    assert parse("8") == (8, 0)
+    assert parse("unknown version") == (0, 0)
+    assert parse("") == (0, 0)
+    assert parse(None) == (0, 0)  # type: ignore[arg-type]
+
+
+async def test_connect_parses_server_version(mock_async_mongo_client):
+    """Connect should record server_version from serverStatus.version."""
+    from unittest.mock import patch
+
+    # Make serverStatus return a real version string
+    async def command_side_effect(cmd, **kwargs):
+        if cmd == "serverStatus":
+            return {"ok": 1, "version": "8.0.4", "process": "mongod"}
+        return {"ok": 1}
+
+    mock_async_mongo_client.admin.command = AsyncMock(side_effect=command_side_effect)
+
+    with patch(
+        "close_mongo_ops_manager.mongodb_manager.AsyncMongoClient",
+        return_value=mock_async_mongo_client,
+    ):
+        m = await MongoDBManager.connect("mongodb://localhost:27017", "", True)
+        assert m.server_version == (8, 0)
+
+
+async def test_get_operations_projects_mongodb_8_fields(manager: MongoDBManager):
+    """Projection should include the MongoDB 8.0 fields used by the UI."""
+    await manager.get_operations()
+    pipeline = manager.admin_db.aggregate.call_args[0][0]
+    project_stage = next(stage for stage in pipeline if "$project" in stage)["$project"]
+    for field in (
+        "queryFramework",
+        "cursor",
+        "progress",
+        "msg",
+        "numYields",
+        "appName",
+        "host",
+        "connectionId",
+        "prepareReadConflicts",
+        "writeConflicts",
+        "dataThroughputLastSecond",
+        "dataThroughputAverage",
+        "twoPhaseCommitCoordinator",
+        "shard",
+    ):
+        assert project_stage.get(field) == 1, f"missing projection for {field}"
+
+
 async def test_kill_operation_all_retries_exhausted(manager: MongoDBManager):
     """Test kill operation when all retries fail."""
     from close_mongo_ops_manager.exceptions import OperationError
