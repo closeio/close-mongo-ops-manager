@@ -451,7 +451,7 @@ async def test_kill_operation_immediate_verification(manager: MongoDBManager):
 
     assert result is True
     manager.admin_db.command.assert_called_with("killOp", op=12345)
-    manager._operation_exists.assert_called_once_with("12345")
+    manager._operation_exists.assert_called_once_with("12345", manager.admin_db)
 
 
 async def test_kill_operation_negative_opid(manager: MongoDBManager):
@@ -503,6 +503,106 @@ async def test_kill_operation_database_not_initialized(manager: MongoDBManager):
     assert result is False
 
 
+async def test_kill_operation_pins_to_reporting_host(manager: MongoDBManager):
+    """Test the kill is sent to the host that reported the operation."""
+    host_client = MagicMock()
+    host_client.admin.command = AsyncMock(return_value={"ok": 1})
+    manager.is_mongos = False
+    manager._get_host_client = AsyncMock(return_value=host_client)
+    manager._operation_exists = AsyncMock(return_value=False)
+    manager.admin_db.command = AsyncMock(return_value={"ok": 1})
+
+    result = await manager.kill_operation("12345", host="node-1:27017")
+
+    assert result is True
+    manager._get_host_client.assert_called_once_with("node-1:27017")
+    host_client.admin.command.assert_called_with("killOp", op=12345)
+    manager.admin_db.command.assert_not_called()
+    # Verification must run against the same host the kill was sent to
+    manager._operation_exists.assert_called_once_with("12345", host_client.admin)
+
+
+async def test_kill_operation_mongos_ignores_host(manager: MongoDBManager):
+    """Test mongos connections kill through mongos, not direct connections."""
+    manager.is_mongos = True
+    manager._get_host_client = AsyncMock()
+    manager._operation_exists = AsyncMock(return_value=False)
+    manager.admin_db.command = AsyncMock(return_value={"ok": 1})
+
+    result = await manager.kill_operation("shard-0:12345", host="node-1:27017")
+
+    assert result is True
+    manager._get_host_client.assert_not_called()
+    manager.admin_db.command.assert_called_with("killOp", op="shard-0:12345")
+
+
+async def test_kill_operation_host_connection_failure_falls_back(
+    manager: MongoDBManager,
+):
+    """Test fallback to the default connection when direct connection fails."""
+    manager.is_mongos = False
+    manager._get_host_client = AsyncMock(return_value=None)
+    manager._operation_exists = AsyncMock(return_value=False)
+    manager.admin_db.command = AsyncMock(return_value={"ok": 1})
+
+    result = await manager.kill_operation("12345", host="node-1:27017")
+
+    assert result is True
+    manager.admin_db.command.assert_called_with("killOp", op=12345)
+
+
+@patch(
+    "close_mongo_ops_manager.mongodb_manager.AsyncMongoClient",
+    new_callable=MagicMock,
+)
+async def test_get_host_client_builds_direct_connection(
+    mock_client_constructor, manager: MongoDBManager
+):
+    """Test direct host clients are created with directConnection and cached."""
+    direct_client = MagicMock()
+    direct_client.admin.command = AsyncMock(return_value={"ok": 1})
+    mock_client_constructor.return_value = direct_client
+    manager._connection_string = (
+        "mongodb://user:pass@node-1:27017,node-2:27017/"
+        "?replicaSet=rs0&readPreference=secondaryPreferred&authSource=admin"
+    )
+
+    client = await manager._get_host_client("node-2:27017")
+
+    assert client is direct_client
+    call_args = mock_client_constructor.call_args
+    assert call_args[0][0] == "mongodb://node-2:27017"
+    assert call_args[1]["directConnection"] is True
+    assert call_args[1]["username"] == "user"
+    assert call_args[1]["password"] == "pass"
+    # Options that conflict with a direct connection are dropped
+    normalized_kwargs = {key.lower(): value for key, value in call_args[1].items()}
+    assert "replicaset" not in normalized_kwargs
+    assert "readpreference" not in normalized_kwargs
+    assert normalized_kwargs["authsource"] == "admin"
+
+    # Second call returns the cached client without creating a new one
+    assert await manager._get_host_client("node-2:27017") is direct_client
+    assert mock_client_constructor.call_count == 1
+
+
+@patch(
+    "close_mongo_ops_manager.mongodb_manager.AsyncMongoClient",
+    new_callable=MagicMock,
+)
+async def test_get_host_client_returns_none_on_failure(
+    mock_client_constructor, manager: MongoDBManager
+):
+    """Test direct host client creation failure returns None."""
+    direct_client = MagicMock()
+    direct_client.admin.command = AsyncMock(side_effect=PyMongoError("unreachable"))
+    mock_client_constructor.return_value = direct_client
+    manager._connection_string = "mongodb://node-1:27017"
+
+    assert await manager._get_host_client("node-1:27017") is None
+    assert manager._host_clients == {}
+
+
 async def test_get_operations_pymongo_error(manager: MongoDBManager):
     """Test get_operations when MongoDB query fails."""
     from close_mongo_ops_manager.exceptions import OperationError
@@ -526,8 +626,8 @@ async def test_operation_exists_pymongo_error(manager: MongoDBManager):
 
     result = await manager._operation_exists("12345")
 
-    # Should return False on error (logged but not raised)
-    assert result is False
+    # Errors are treated as "still exists" so kills are never falsely verified
+    assert result is True
 
 
 async def test_operation_exists_unexpected_error(manager: MongoDBManager):
@@ -539,8 +639,8 @@ async def test_operation_exists_unexpected_error(manager: MongoDBManager):
 
     result = await manager._operation_exists("12345")
 
-    # Should return False on error (logged but not raised)
-    assert result is False
+    # Errors are treated as "still exists" so kills are never falsely verified
+    assert result is True
 
 
 async def test_kill_operation_all_retries_exhausted(manager: MongoDBManager):

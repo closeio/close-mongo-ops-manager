@@ -120,11 +120,35 @@ async def test_kill_selected_action_with_selection(
         await pilot.click(yes_button)
         await pilot.pause(0.3)  # Give more time for async operations
 
-        app.mongodb.kill_operation.assert_called_with("12345")
+        app.mongodb.kill_operation.assert_called_with("12345", host=None)
         assert "Successfully killed 1 operation(s)" in [
             n.message for n in pilot.app._notifications
         ]
         assert not app.operations_view.selected_ops
+
+
+async def test_kill_selected_passes_reporting_host(app: MongoOpsManager):
+    """Test the kill is pinned to the host that reported the operation."""
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+
+        app.operations_view.selected_ops = {"12345"}
+        app.operations_view.current_ops = [
+            {
+                "opid": "12345",
+                "op": "query",
+                "ns": "test.collection",
+                "host": "node-1:27017",
+            }
+        ]
+        app.mongodb.kill_operation.return_value = True
+
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.2)
+        await pilot.click("#yes")
+        await pilot.pause(0.3)
+
+        app.mongodb.kill_operation.assert_called_with("12345", host="node-1:27017")
 
 
 async def test_kill_selected_skips_operations_missing_opid(app: MongoOpsManager):
@@ -150,7 +174,7 @@ async def test_kill_selected_skips_operations_missing_opid(app: MongoOpsManager)
         await pilot.click("#yes")
         await pilot.pause(0.3)
 
-        app.mongodb.kill_operation.assert_called_with("555")
+        app.mongodb.kill_operation.assert_called_with("555", host=None)
         notifications = [n.message for n in pilot.app._notifications]
         assert any("Successfully killed 1 operation(s)" in msg for msg in notifications)
 

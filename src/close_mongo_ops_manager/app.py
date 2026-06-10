@@ -651,9 +651,20 @@ class MongoOpsManager(App):
                 success_count = 0
                 error_count = 0
 
+                # Map each selected opid to the server that reported it so the
+                # kill is sent to that exact server (opids are per-server).
+                op_hosts: dict[str, str] = {}
+                for op in self.operations_view.current_ops:
+                    op_id = op.get("opid")
+                    op_host = op.get("host")
+                    if op_id is not None and op_host:
+                        op_hosts[str(op_id)] = op_host
+
                 for opid in list(self.operations_view.selected_ops):
                     try:
-                        if await self.mongodb.kill_operation(opid):
+                        if await self.mongodb.kill_operation(
+                            opid, host=op_hosts.get(opid)
+                        ):
                             success_count += 1
                         else:
                             error_count += 1

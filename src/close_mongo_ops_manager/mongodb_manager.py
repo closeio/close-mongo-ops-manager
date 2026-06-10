@@ -6,6 +6,7 @@ from typing import Any
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import PyMongoError
+from pymongo.uri_parser import parse_uri
 
 from close_mongo_ops_manager.exceptions import MongoConnectionError, OperationError
 
@@ -17,11 +18,30 @@ logger = logging.getLogger("mongo_ops_manager")
 class MongoDBManager:
     """Handles MongoDB connection and operations."""
 
+    # Connection options that conflict with a direct, single-host connection.
+    DIRECT_CLIENT_EXCLUDED_OPTIONS = frozenset(
+        {
+            "replicaset",
+            "loadbalanced",
+            "directconnection",
+            "readpreference",
+            "readpreferencetags",
+            "maxstalenessseconds",
+            "srvservicename",
+            "srvmaxhosts",
+            "serverselectiontimeoutms",
+            "connecttimeoutms",
+        }
+    )
+
     def __init__(self) -> None:
         self.client: AsyncMongoClient | None = None
         self.admin_db: AsyncDatabase | None = None
         self.namespace: str = ""
         self.hide_system_ops: bool = True
+        self.is_mongos: bool = False
+        self._connection_string: str = ""
+        self._host_clients: dict[str, AsyncMongoClient] = {}
 
     async def close(self) -> None:
         """Close all MongoDB connections properly."""
@@ -33,6 +53,14 @@ class MongoDBManager:
                 logger.debug("Closed main MongoDB connection")
         except Exception as e:
             logger.warning(f"Error closing main MongoDB connection: {e}")
+
+        for host, host_client in list(self._host_clients.items()):
+            try:
+                await host_client.close()
+                logger.debug(f"Closed direct connection to {host}")
+            except Exception as e:
+                logger.warning(f"Error closing direct connection to {host}: {e}")
+        self._host_clients.clear()
 
     @classmethod
     async def connect(
@@ -46,6 +74,7 @@ class MongoDBManager:
         try:
             self.namespace = namespace
             self.hide_system_ops = hide_system_ops
+            self._connection_string = connection_string
 
             # Create client
             separator = "&" if "?" in connection_string else "?"
@@ -69,6 +98,7 @@ class MongoDBManager:
             server_status = await self.admin_db.command("serverStatus")
             version = server_status.get("version", "unknown version")
             process = server_status.get("process", "unknown process")
+            self.is_mongos = process == "mongos"
             logger.info(f"Connected to MongoDB {version} ({process})")
 
             return self
@@ -193,6 +223,7 @@ class MongoDBManager:
                 {
                     "$project": {
                         "opid": 1,
+                        "host": 1,
                         "type": 1,
                         "op": 1,
                         "secs_running": 1,
@@ -256,8 +287,45 @@ class MongoDBManager:
             "$or": [{"opid": {"$eq": candidate}} for candidate in deduped_candidates]
         }
 
-    async def _operation_exists(self, opid: str) -> bool:
-        """Check if operation still exists with minimal query."""
+    async def _get_host_client(self, host: str) -> AsyncMongoClient | None:
+        """Get (or create) a client connected directly to a specific host."""
+        cached = self._host_clients.get(host)
+        if cached is not None:
+            return cached
+
+        try:
+            parsed = parse_uri(self._connection_string)
+            options = {
+                key: value
+                for key, value in parsed.get("options", {}).items()
+                if key.lower() not in self.DIRECT_CLIENT_EXCLUDED_OPTIONS
+            }
+            host_client: AsyncMongoClient = AsyncMongoClient(
+                f"mongodb://{host}",
+                directConnection=True,
+                username=parsed.get("username"),
+                password=parsed.get("password"),
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+                **options,
+            )
+            await host_client.admin.command("ping")
+        except Exception as e:
+            logger.warning(f"Could not connect directly to {host}: {e}")
+            return None
+
+        self._host_clients[host] = host_client
+        return host_client
+
+    async def _operation_exists(
+        self, opid: str, admin_db: AsyncDatabase | None = None
+    ) -> bool:
+        """Check if operation still exists with minimal query.
+
+        Errors are treated as "still exists" so a kill is never reported
+        successful without positive confirmation that the operation is gone.
+        """
+        db = admin_db if admin_db is not None else self.admin_db
         try:
             pipeline = [
                 {"$currentOp": {"allUsers": True}},
@@ -266,18 +334,22 @@ class MongoDBManager:
                 {"$limit": 1},
             ]
 
-            result = await self.admin_db.aggregate(pipeline)
+            result = await db.aggregate(pipeline)
             result_list = await result.to_list(1)
             return len(result_list) > 0  # Operation exists if result is not empty
         except PyMongoError as e:
             logger.warning(f"Error checking operation existence: {e}")
-            return False
+            return True
         except Exception as e:
             logger.error(f"Unexpected error checking operation: {e}", exc_info=True)
-            return False
+            return True
 
     async def kill_operation(
-        self, opid: str, max_retries: int = 2, verify_timeout: float = 5.0
+        self,
+        opid: str,
+        max_retries: int = 2,
+        verify_timeout: float = 5.0,
+        host: str | None = None,
     ) -> bool:
         """Kill a MongoDB operation with retries and verification."""
         normalized_opid = opid.strip() if isinstance(opid, str) else str(opid)
@@ -297,6 +369,25 @@ class MongoDBManager:
             verify_timeout = max(1.0, verify_timeout)
 
         try:
+            # Opids are per-mongod counters and command() always targets the
+            # primary, while operations are listed with secondaryPreferred
+            # reads. Pin the kill and its verification to the server that
+            # reported the operation, otherwise the kill can hit the wrong
+            # server or even an unrelated operation with the same opid.
+            # Through mongos this is not needed: mongos routes "shard:opid"
+            # kills itself, and shard members may not accept direct
+            # connections.
+            admin_db = self.admin_db
+            if host and not self.is_mongos:
+                host_client = await self._get_host_client(host)
+                if host_client is not None:
+                    admin_db = host_client.admin
+                else:
+                    logger.warning(
+                        f"Falling back to default connection to kill operation "
+                        f"{normalized_opid} reported by {host}"
+                    )
+
             # Convert string opid to numeric if possible (for non-sharded operations)
             use_opid: str | int = normalized_opid
             if ":" not in normalized_opid and normalized_opid.isdigit():
@@ -312,16 +403,16 @@ class MongoDBManager:
             for attempt in range(max_retries):
                 try:
                     # Execute killOp command
-                    result = await self.admin_db.command("killOp", op=use_opid)
+                    result = await admin_db.command("killOp", op=use_opid)
 
                     if result.get("ok") == 1:
                         # Start verification process with timeout
                         verification_start = time.monotonic()
 
                         while time.monotonic() - verification_start < verify_timeout:
-                            # Check if operation still exists
+                            # Check on the same server the kill was sent to
                             operation_exists = await self._operation_exists(
-                                normalized_opid
+                                normalized_opid, admin_db
                             )
 
                             if not operation_exists:
@@ -358,6 +449,7 @@ class MongoDBManager:
                                     numeric_part,
                                     max_retries=max_retries - attempt,
                                     verify_timeout=verify_timeout,
+                                    host=host,
                                 )
                         except Exception as inner_e:
                             logger.error(
