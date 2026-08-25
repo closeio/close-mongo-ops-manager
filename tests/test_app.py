@@ -335,6 +335,47 @@ async def test_display_operation_with_mongos_metadata(app: MongoOpsManager):
         assert app.operations_view.row_count == 1
 
 
+async def test_refresh_drops_operations_without_opid_keeps_rows_aligned(
+    app: MongoOpsManager,
+):
+    """Entries without opid (e.g. idle sessions) must not desync the table
+    rows from current_ops, which is indexed by cursor row for details/kills."""
+    idle_session = {
+        "type": "idleSession",
+        "host": "shard-a-1:27018",
+        "desc": "inactive transaction",
+        "client": "10.0.0.1:1111",
+        "active": False,
+    }
+    slow_op = {
+        "opid": "shard-a:4242",
+        "op": "query",
+        "ns": "closeio.activity",
+        "client": "10.0.0.2:2222",
+        "desc": "conn42",
+        "secs_running": 30,
+        "command": {"find": "activity"},
+    }
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+
+        # Idle session sorts first (no secs_running) and would shift rows
+        app.mongodb.get_operations.return_value = [idle_session, slow_op]
+        await pilot.press("ctrl+r")
+        await pilot.pause(0.1)
+
+        assert app.operations_view.row_count == 1
+        assert app.operations_view.current_ops == [slow_op]
+        assert app.operations_view.row_count == len(app.operations_view.current_ops)
+
+        # The row under the cursor resolves to the operation it displays
+        app.operations_view.move_cursor(row=0)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert app.screen.operation is slow_op
+
+
 async def test_refresh_operations_mongodb_none(app: MongoOpsManager):
     """Test refresh_operations when mongodb is None."""
     async with app.run_test() as pilot:

@@ -314,19 +314,22 @@ class MongoOpsManager(App):
             if loading_timer and not loading_timer.done():
                 loading_timer.cancel()
 
+            # Drop entries without an opid before anything else so that the
+            # table rows and current_ops stay index-aligned: the cursor row is
+            # used to look up the operation for details and kills.
+            skipped = sum(1 for op in ops_data if not op or "opid" not in op)
+            if skipped:
+                logger.warning(f"Skipping {skipped} operation(s) without opid")
+                ops_data = [op for op in ops_data if op and "opid" in op]
+
             # Store the operations data in the view (after sorting)
             self.operations_view.current_ops = ops_data
 
             # Clear all rows to ensure correct ordering
             self.operations_view.clear()
 
-            # Update existing rows and add new ones in sorted order
-            for i, op in enumerate(ops_data):
-                # Skip operations without opid
-                if not op or "opid" not in op:
-                    logger.warning("Skipping operation without opid")
-                    continue
-
+            # Add rows in sorted order
+            for op in ops_data:
                 op_id = str(op["opid"])
 
                 # Get client info
@@ -367,7 +370,7 @@ class MongoOpsManager(App):
                 self.operations_view.add_row(*row_data, key=op_id)
 
             # Build set of current operation IDs
-            current_op_ids = {str(op["opid"]) for op in ops_data if op and "opid" in op}
+            current_op_ids = {str(op["opid"]) for op in ops_data}
 
             # Restore selected operations
             self.operations_view.selected_ops = {
@@ -390,7 +393,7 @@ class MongoOpsManager(App):
                 # Find the new row index of the previously selected operation
                 new_row_index = None
                 for i, op in enumerate(ops_data):
-                    if op and str(op.get("opid", "")) == target_opid:
+                    if str(op["opid"]) == target_opid:
                         new_row_index = i
                         break
 

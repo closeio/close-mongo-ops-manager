@@ -17,6 +17,9 @@ logger = logging.getLogger("mongo_ops_manager")
 class MongoDBManager:
     """Handles MongoDB connection and operations."""
 
+    # Maximum number of operations fetched per refresh.
+    MAX_OPERATIONS = 1000
+
     # Connection options that conflict with a direct, single-host connection.
     DIRECT_CLIENT_EXCLUDED_OPTIONS = frozenset(
         {
@@ -117,11 +120,13 @@ class MongoDBManager:
 
         try:
             # Base currentOp arguments
+            # Idle sessions (inactive transactions) have no opid, so they can
+            # be neither displayed nor killed with killOp; leave them out.
             current_op_args = {
                 "allUsers": True,
                 "idleConnections": False,
                 "idleCursors": False,
-                "idleSessions": True,
+                "idleSessions": False,
                 "localOps": False,
                 "backtrace": False,
             }
@@ -253,11 +258,20 @@ class MongoDBManager:
                 }
             )
 
-            # Limit results to prevent overwhelming the UI
-            pipeline.append({"$limit": 1000})
+            # Limit results to prevent overwhelming the UI. Sort the longest
+            # running operations first so the limit never drops the slowest
+            # ones.
+            pipeline.append({"$sort": {"secs_running": -1}})
+            pipeline.append({"$limit": self.MAX_OPERATIONS})
 
             cursor = await self.admin_db.aggregate(pipeline)
             inprog = await cursor.to_list(None)
+
+            if len(inprog) >= self.MAX_OPERATIONS:
+                logger.warning(
+                    f"Operation list truncated to the {self.MAX_OPERATIONS} "
+                    "longest running operations"
+                )
 
             return inprog
         except PyMongoError as e:

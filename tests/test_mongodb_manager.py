@@ -310,6 +310,29 @@ async def test_parse_complex_currentop_output(manager: MongoDBManager):
     assert op["locks"]["Global"] == "r"
 
 
+async def test_get_operations_sorts_slowest_first_before_limit(
+    manager: MongoDBManager,
+):
+    """The pipeline sorts by running time so the limit keeps the slowest ops."""
+    await manager.get_operations()
+
+    pipeline = manager.admin_db.aggregate.call_args[0][0]
+    sort_index = next(i for i, stage in enumerate(pipeline) if "$sort" in stage)
+    limit_index = next(i for i, stage in enumerate(pipeline) if "$limit" in stage)
+
+    assert pipeline[sort_index]["$sort"] == {"secs_running": -1}
+    assert limit_index == sort_index + 1
+    assert pipeline[limit_index]["$limit"] == MongoDBManager.MAX_OPERATIONS
+
+
+async def test_get_operations_excludes_idle_sessions(manager: MongoDBManager):
+    """Idle sessions have no opid and cannot be shown or killed."""
+    await manager.get_operations()
+
+    pipeline = manager.admin_db.aggregate.call_args[0][0]
+    assert pipeline[0]["$currentOp"]["idleSessions"] is False
+
+
 async def test_get_operations_with_missing_opid(manager: MongoDBManager):
     """Test handling of operations without opid field."""
     operations_without_opid = [
