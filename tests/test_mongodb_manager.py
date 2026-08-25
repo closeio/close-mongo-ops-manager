@@ -1,11 +1,12 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from pymongo import ReadPreference
 from pymongo.errors import PyMongoError
 
 from close_mongo_ops_manager.mongodb_manager import (
-    MongoDBManager,
     MongoConnectionError,
+    MongoDBManager,
     OperationError,
 )
 
@@ -52,6 +53,49 @@ async def test_connect_failure(mock_client_constructor):
     mock_client_constructor.side_effect = PyMongoError("Connection failed")
     with pytest.raises(MongoConnectionError):
         await MongoDBManager.connect("mongodb://localhost:27017", "test_ns", True)
+
+
+@patch(
+    "close_mongo_ops_manager.mongodb_manager.AsyncMongoClient",
+    new_callable=MagicMock,
+)
+async def test_connect_reads_from_primary(
+    mock_client_constructor, mock_async_mongo_client
+):
+    """The client always reads from the primary so $currentOp reports the
+    operations on every shard primary (or the replica set primary)."""
+    mock_client_constructor.return_value = mock_async_mongo_client
+
+    await MongoDBManager.connect("mongodb://localhost:27017", "test_ns", True)
+
+    call_args = mock_client_constructor.call_args
+    assert call_args[0][0] == "mongodb://localhost:27017"
+    assert call_args[1]["read_preference"] == ReadPreference.PRIMARY
+
+
+@patch(
+    "close_mongo_ops_manager.mongodb_manager.AsyncMongoClient",
+    new_callable=MagicMock,
+)
+async def test_connect_load_balanced_appends_option(
+    mock_client_constructor, mock_async_mongo_client
+):
+    """loadBalanced is appended to the URI without altering read preference."""
+    mock_client_constructor.return_value = mock_async_mongo_client
+
+    await MongoDBManager.connect(
+        "mongodb://localhost:27017/?authSource=admin",
+        "test_ns",
+        True,
+        load_balanced=True,
+    )
+
+    call_args = mock_client_constructor.call_args
+    assert (
+        call_args[0][0]
+        == "mongodb://localhost:27017/?authSource=admin&loadBalanced=true"
+    )
+    assert call_args[1]["read_preference"] == ReadPreference.PRIMARY
 
 
 async def test_get_operations(manager: MongoDBManager):

@@ -1,16 +1,15 @@
 import asyncio
+import logging
 import re
 import time
 from typing import Any
 
-from pymongo import AsyncMongoClient
+from pymongo import AsyncMongoClient, ReadPreference
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import PyMongoError
 from pymongo.uri_parser import parse_uri
 
 from close_mongo_ops_manager.exceptions import MongoConnectionError, OperationError
-
-import logging
 
 logger = logging.getLogger("mongo_ops_manager")
 
@@ -76,15 +75,20 @@ class MongoDBManager:
             self.hide_system_ops = hide_system_ops
             self._connection_string = connection_string
 
-            # Create client
-            separator = "&" if "?" in connection_string else "?"
-            conn_string = (
-                f"{connection_string}{separator}readPreference=secondaryPreferred"
-            )
+            # Create client. Always read from the primary: $currentOp only
+            # reports operations on the server that executes it, and through
+            # mongos it is fanned out to the member of each shard selected by
+            # the read preference. Reading from the primary shows the
+            # operations on every shard primary (or the replica set primary),
+            # and keeps killOp verification on the same server as the kill.
+            # The explicit kwarg overrides any readPreference in the URI.
+            conn_string = connection_string
             if load_balanced:
-                conn_string += "&loadBalanced=true"
+                separator = "&" if "?" in connection_string else "?"
+                conn_string = f"{connection_string}{separator}loadBalanced=true"
             self.client = AsyncMongoClient(
                 conn_string,
+                read_preference=ReadPreference.PRIMARY,
                 serverSelectionTimeoutMS=5000,
                 connectTimeoutMS=5000,
             )
@@ -369,11 +373,11 @@ class MongoDBManager:
             verify_timeout = max(1.0, verify_timeout)
 
         try:
-            # Opids are per-mongod counters and command() always targets the
-            # primary, while operations are listed with secondaryPreferred
-            # reads. Pin the kill and its verification to the server that
-            # reported the operation, otherwise the kill can hit the wrong
-            # server or even an unrelated operation with the same opid.
+            # Opids are per-mongod counters. Operations are listed and killed
+            # with primary reads, but pin the kill and its verification to the
+            # server that reported the operation anyway (e.g. after a
+            # failover), otherwise the kill can hit the wrong server or even
+            # an unrelated operation with the same opid.
             # Through mongos this is not needed: mongos routes "shard:opid"
             # kills itself, and shard members may not accept direct
             # connections.
