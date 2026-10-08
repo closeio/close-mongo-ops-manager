@@ -174,3 +174,7 @@ cargo run -- --host 127.0.0.1                # run the app
 | `src/mongo/` | Connecting, topology discovery, `$currentOp`, killing |
 | `src/model.rs` | Types shared by the layers |
 | `src/theme.rs`, `src/config.rs`, `src/logging.rs` | Themes, configuration file, log |
+
+# Interface
+![App screenshot](img/close-mongo-ops-manager.png "Close Mongo Ops Manager")
+
