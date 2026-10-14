@@ -13,9 +13,9 @@ use mongodb::Client;
 use mongodb::bson::{Bson, Document, doc};
 
 use super::call::{admin_aggregate, admin_command};
-use super::parse::{as_i64, same_start_time, start_time};
+use super::parse::{as_i64, start_time};
 use super::pipeline::lookup_pipeline;
-use crate::model::{KillOutcome, KillRequest, OpId, OpSource};
+use crate::model::{KillOutcome, KillRequest, OpId, OpIdentity, OpSource};
 
 /// Why a kill was refused after a lookup.
 const DIFFERENT_OPERATION: &str = "operation id now belongs to a different operation";
@@ -121,51 +121,21 @@ impl FoundOp {
             kill_pending: matches!(doc.get("killPending"), Some(Bson::Boolean(true))),
         }
     }
+
+    fn identity(&self) -> OpIdentity<'_> {
+        OpIdentity {
+            host: self.host.as_deref(),
+            start: self.start.as_deref(),
+            connection: self.connection.as_deref(),
+            connection_id: self.connection_id,
+        }
+    }
 }
 
-/// Whether `found`, which has the opid of `request`, is the same operation:
-/// on the same host (when both are known), and with the same start time
-/// (within a second) or on the same connection.
-///
-/// The start time alone is not enough: it moves when the wall clock is
-/// stepped, and a multi-statement update or delete restarts
-/// `microsecs_running` with every statement.
+/// Whether `found`, which has the opid of `request`, is the same operation
+/// (see [`OpIdentity::same_operation`]).
 pub(crate) fn is_same_operation(request: &KillRequest, found: &FoundOp) -> bool {
-    if let (Some(listed), Some(now)) = (&request.host, &found.host)
-        && !listed.eq_ignore_ascii_case(now)
-    {
-        return false;
-    }
-    let start = match (&request.current_op_time, &found.start) {
-        (Some(listed), Some(now)) => Some(same_start_time(listed, now)),
-        _ => None,
-    };
-    let connection = same_connection(request.connection.as_deref(), found);
-    match (start, connection) {
-        // Nothing to tell them apart.
-        (None, None) => true,
-        _ => start == Some(true) || connection == Some(true),
-    }
-}
-
-/// Whether `found` runs on the connection `listed` (`desc`), comparing its
-/// `desc` and `connectionId` when present. `None` when it cannot be told.
-fn same_connection(listed: Option<&str>, found: &FoundOp) -> Option<bool> {
-    let listed = listed?;
-    let by_desc = found.connection.as_deref().map(|now| now == listed);
-    let by_id = found
-        .connection_id
-        .zip(connection_number(listed))
-        .map(|(now, listed)| now == listed);
-    match (by_desc, by_id) {
-        (None, None) => None,
-        (by_desc, by_id) => Some(by_desc != Some(false) && by_id != Some(false)),
-    }
-}
-
-/// `123` for `"conn123"`.
-fn connection_number(desc: &str) -> Option<i64> {
-    desc.strip_prefix("conn")?.parse().ok()
+    request.identity().same_operation(&found.identity())
 }
 
 /// Polling of the operation after the kill.
@@ -402,7 +372,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::model::OpKey;
+    use crate::model::{OpKey, connection_number};
 
     const START: &str = "2026-10-08T16:29:11.101+00:00";
 

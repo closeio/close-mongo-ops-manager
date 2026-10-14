@@ -27,7 +27,7 @@ use self::cluster::{
 use self::kill::{
     KillPlan, KillTiming, ServerBackend, Unreachable, execute, execute_through_mongos, plan_kill,
 };
-use self::options::{DirectClients, Users, main_options};
+use self::options::{ClientKey, DirectClients, Users, main_options};
 use self::parse::{OpContext, merge_operations, parse_operations};
 use self::pipeline::{LISTING_BATCH_SIZE, ListingSpec, listing_pipeline};
 use self::topology::{Hello, format_address, host_info_name, normalize_address};
@@ -94,7 +94,7 @@ pub struct MongoManager {
     /// Cluster members, in per-node mode (`--all-nodes`).
     nodes: Option<NodePool>,
     /// Direct clients created for kills.
-    adhoc: Mutex<HashMap<AdhocKey, Client>>,
+    adhoc: Mutex<HashMap<ClientKey, Client>>,
     /// The last snapshot was truncated (to log changes only).
     truncated: AtomicBool,
     /// [`NO_MEMBERS`] holds (to log it once).
@@ -117,9 +117,6 @@ fn assert_send_futures(manager: &MongoManager, query: &FetchQuery, request: &Kil
     send(manager.kill(request));
     send(manager.shutdown());
 }
-
-/// Address, credential and required replica set name of an ad-hoc client.
-type AdhocKey = (String, Users, Option<String>);
 
 /// Operations listed by one query.
 struct Listing {
@@ -678,15 +675,11 @@ impl MongoManager {
     ) -> Result<Client, String> {
         let address =
             normalize_address(address).ok_or_else(|| format!("invalid address {address}"))?;
-        if let Some(client) = self
-            .nodes
-            .as_ref()
-            .and_then(|p| p.client_for(&address, users))
-        {
+        let key: ClientKey = (address, users, set_name.map(str::to_owned));
+        if let Some(client) = self.nodes.as_ref().and_then(|p| p.client_for(&key)) {
             return Ok(client);
         }
         let mut adhoc = lock(&self.adhoc);
-        let key = (address, users, set_name.map(str::to_owned));
         if let Some(client) = adhoc.get(&key) {
             return Ok(client.clone());
         }

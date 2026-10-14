@@ -11,7 +11,7 @@ use mongodb::Client;
 use mongodb::bson::{Document, doc};
 
 use super::call::{CallError, admin_aggregate, admin_command};
-use super::options::{DirectClients, Users};
+use super::options::{ClientKey, DirectClients, Users};
 use super::parse::{OpContext, parse_operations};
 use super::pipeline::LISTING_BATCH_SIZE;
 use super::topology::{Hello, normalize_address, parse_replica_set_hosts};
@@ -23,8 +23,8 @@ use crate::model::{
 pub(crate) const REDISCOVERY_INTERVAL: Duration = Duration::from_secs(30);
 
 /// A member that could not be polled is reported as failed right away, and
-/// polled again in the background, during this long: a dead member must not
-/// slow every refresh down by the timeout.
+/// polled again in the background this long after its last poll ended: a dead
+/// member must not slow every refresh down by the timeout.
 pub(crate) const RETRY_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Shard name of the config server replica set.
@@ -42,6 +42,13 @@ pub(crate) struct Member {
     pub role: NodeRole,
     /// The direct client, or why it could not be created.
     pub client: Result<Client, String>,
+}
+
+impl Member {
+    /// The key of the member's client.
+    fn client_key(&self) -> ClientKey {
+        client_key(&self.address, &self.shard, self.set_name.as_deref())
+    }
 }
 
 type InFlight = Shared<BoxFuture<'static, ()>>;
@@ -210,7 +217,7 @@ impl NodePool {
     /// Each poll runs in its own task and records its outcome in the pool, so
     /// the outcome is kept even if the fetch is dropped. Members whose last
     /// poll failed are reported with that error right away, and polled again
-    /// in the background every [`RETRY_INTERVAL`].
+    /// in the background [`RETRY_INTERVAL`] after their last poll ended.
     pub async fn poll(&self, members: &[Member], pipeline: &[Document]) -> Vec<MemberPoll> {
         enum Poll {
             /// Failing: reported with its last error without waiting.
@@ -224,7 +231,9 @@ impl NodePool {
                 state.failures.get_mut(&member.address).map(|failure| {
                     let retry = now >= failure.retry_at;
                     if retry {
-                        failure.retry_at = now + RETRY_INTERVAL;
+                        // Not again while this poll runs (up to the timeout):
+                        // its outcome sets the next retry.
+                        failure.retry_at = now + self.inner.timeout + RETRY_INTERVAL;
                     }
                     (failure.error.clone(), retry)
                 })
@@ -258,13 +267,13 @@ impl NodePool {
         join_all(polls).await
     }
 
-    /// The direct client of a known member, if it uses `users`.
-    pub fn client_for(&self, address: &str, users: Users) -> Option<Client> {
+    /// The direct client of a known member, if it was created for `key`.
+    pub fn client_for(&self, key: &ClientKey) -> Option<Client> {
         self.inner
             .state()
             .members
             .iter()
-            .find(|m| m.address == address && users_of(&m.shard) == users)
+            .find(|m| m.client_key() == *key)
             .and_then(|m| m.client.clone().ok())
     }
 
@@ -298,16 +307,25 @@ impl Drop for DiscoveryGuard {
     }
 }
 
+/// The key of the client of a member of `shard`.
+fn client_key(address: &str, shard: &str, set_name: Option<&str>) -> ClientKey {
+    (
+        address.to_owned(),
+        users_of(shard),
+        set_name.map(str::to_owned),
+    )
+}
+
 async fn run_discovery(inner: Arc<Inner>) {
     let mut guard = DiscoveryGuard {
         inner: inner.clone(),
         applied: false,
     };
-    let existing: HashMap<String, Client> = inner
+    let existing: HashMap<ClientKey, Client> = inner
         .state()
         .members
         .iter()
-        .filter_map(|m| Some((m.address.clone(), m.client.clone().ok()?)))
+        .filter_map(|m| Some((m.client_key(), m.client.clone().ok()?)))
         .collect();
     let result = discover(&inner, &existing).await;
     let stale = apply_discovery(&inner, result);
@@ -386,12 +404,19 @@ fn apply_discovery(inner: &Inner, result: Result<Discovered, String>) -> Vec<Cli
                 if member.role == NodeRole::Unknown {
                     member.role = old.role;
                 }
-                // Keep the pooled client.
-                if old.client.is_ok()
-                    && let Ok(new) = std::mem::replace(&mut member.client, old.client)
-                    && created
-                {
-                    stale.push(new);
+                if old.client.is_ok() && old.client_key() == member.client_key() {
+                    // Keep the pooled client.
+                    if let Ok(new) = std::mem::replace(&mut member.client, old.client)
+                        && created
+                    {
+                        stale.push(new);
+                    }
+                } else {
+                    // Another client (the old one could not be created, or
+                    // uses another credential or replica set name): poll it
+                    // right away. The old one is dropped, not shut down: a
+                    // poll or kill may still use a clone of it.
+                    state.failures.remove(&member.address);
                 }
             }
             None => added.push(member.address.clone()),
@@ -584,7 +609,10 @@ fn unprobed_members(probes: &[Probe]) -> Vec<Seed> {
     seeds
 }
 
-async fn discover(inner: &Inner, existing: &HashMap<String, Client>) -> Result<Discovered, String> {
+async fn discover(
+    inner: &Inner,
+    existing: &HashMap<ClientKey, Client>,
+) -> Result<Discovered, String> {
     let (seeds, warnings) = discovery_seeds(inner).await?;
     let mut unique = HashSet::new();
     let seeds: Vec<Seed> = seeds
@@ -667,11 +695,12 @@ async fn config_server_hosts(inner: &Inner) -> Result<String, String> {
 /// Sends `hello` to every seed through its direct client.
 async fn probe_all(
     inner: &Inner,
-    existing: &HashMap<String, Client>,
+    existing: &HashMap<ClientKey, Client>,
     seeds: Vec<Seed>,
 ) -> Vec<Probe> {
     join_all(seeds.into_iter().map(|seed| async move {
-        let (client, created) = match existing.get(&seed.address) {
+        let key = client_key(&seed.address, &seed.shard, seed.set_name.as_deref());
+        let (client, created) = match existing.get(&key) {
             Some(client) => (Ok(client.clone()), false),
             None => (
                 inner.direct.client(
@@ -980,6 +1009,10 @@ mod tests {
         }
     }
 
+    fn key(address: &str, users: Users, set_name: Option<&str>) -> ClientKey {
+        (address.into(), users, set_name.map(str::to_owned))
+    }
+
     fn discovered(members: Vec<Found>) -> Result<Discovered, String> {
         Ok(Discovered {
             members,
@@ -1038,8 +1071,45 @@ mod tests {
         let third = vec![found(&pool, "db3:27018", "shard01", NodeRole::Primary)];
         apply_discovery(inner, discovered(third));
         assert!(inner.state().failures.is_empty());
-        assert!(pool.client_for("db3:27018", Users::Node).is_some());
-        assert!(pool.client_for("db1:27018", Users::Node).is_none());
+        assert!(
+            pool.client_for(&key("db3:27018", Users::Node, None))
+                .is_some()
+        );
+        assert!(
+            pool.client_for(&key("db1:27018", Users::Node, None))
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn members_get_a_new_client_when_their_replica_set_changes() {
+        let pool = pool(Deployment::Sharded);
+        let inner = &pool.inner;
+        let first = vec![found(&pool, "db1:27018", "shard01", NodeRole::Primary)];
+        apply_discovery(inner, discovered(first));
+        inner.state().failures.insert(
+            "db1:27018".into(),
+            Failure {
+                error: "replica set name mismatch".into(),
+                retry_at: Instant::now() + RETRY_INTERVAL,
+            },
+        );
+
+        let mut moved = found(&pool, "db1:27018", "shard01", NodeRole::Primary);
+        moved.member.set_name = Some("rs1".into());
+        moved.member.client = inner.direct.client("db1:27018", Users::Node, Some("rs1"));
+        // The old client is not shut down: a kill may still use it.
+        assert!(apply_discovery(inner, discovered(vec![moved])).is_empty());
+        assert!(
+            pool.client_for(&key("db1:27018", Users::Node, None))
+                .is_none()
+        );
+        assert!(
+            pool.client_for(&key("db1:27018", Users::Node, Some("rs1")))
+                .is_some()
+        );
+        // The failure was the old client's: the new one is polled right away.
+        assert!(inner.state().failures.is_empty());
     }
 
     #[tokio::test]
@@ -1091,11 +1161,27 @@ mod tests {
         ];
         apply_discovery(&pool.inner, discovered(first));
         assert_eq!(pool.addresses_of("shard01"), ["db1:27018"]);
-        // Member clients use the credential of their shard.
-        assert!(pool.client_for("db1:27018", Users::Node).is_some());
-        assert!(pool.client_for("db1:27018", Users::Cluster).is_none());
-        assert!(pool.client_for("cfg1:27019", Users::Cluster).is_some());
-        assert!(pool.client_for("cfg1:27019", Users::Node).is_none());
+        // Member clients use the credential and replica set of their shard.
+        assert!(
+            pool.client_for(&key("db1:27018", Users::Node, None))
+                .is_some()
+        );
+        assert!(
+            pool.client_for(&key("db1:27018", Users::Node, Some("other")))
+                .is_none()
+        );
+        assert!(
+            pool.client_for(&key("db1:27018", Users::Cluster, None))
+                .is_none()
+        );
+        assert!(
+            pool.client_for(&key("cfg1:27019", Users::Cluster, None))
+                .is_some()
+        );
+        assert!(
+            pool.client_for(&key("cfg1:27019", Users::Node, None))
+                .is_none()
+        );
         // Gone from the cluster, the shard is still known.
         apply_discovery(&pool.inner, discovered(Vec::new()));
         assert!(pool.addresses_of("shard01").is_empty());

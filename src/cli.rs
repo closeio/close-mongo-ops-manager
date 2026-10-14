@@ -93,7 +93,7 @@ pub struct Args {
     #[arg(long, env = "MONGODB_NODE_USERNAME")]
     pub node_username: Option<String>,
 
-    /// Password for --node-username.
+    /// Password for --node-username (required with it).
     #[arg(long, env = "MONGODB_NODE_PASSWORD", hide_env_values = true)]
     pub node_password: Option<String>,
 
@@ -286,6 +286,7 @@ pub fn connect_config(args: &Args) -> Result<ConnectConfig, String> {
         None => ConnectTarget::Hosts(parse_hosts(&args.host, args.port)?),
     };
 
+    let auth_source = non_empty(Some(&args.auth_source));
     let username = non_empty(args.username.as_deref());
     let password = non_empty(args.password.as_deref());
     let credential = match (username, password) {
@@ -293,7 +294,7 @@ pub fn connect_config(args: &Args) -> Result<ConnectConfig, String> {
             Credential::builder()
                 .username(username.to_owned())
                 .password(password.to_owned())
-                .source(args.auth_source.clone())
+                .source(auth_source.map(str::to_owned))
                 .build(),
         ),
         (Some(_), None) => {
@@ -306,24 +307,33 @@ pub fn connect_config(args: &Args) -> Result<ConnectConfig, String> {
         log::warn!("Using unauthenticated connection");
     }
 
-    let node_credential = match non_empty(args.node_username.as_deref()) {
-        Some(username) => Some(
+    let node_username = non_empty(args.node_username.as_deref());
+    let node_password = non_empty(args.node_password.as_deref());
+    let node_credential = match (node_username, node_password) {
+        (Some(username), Some(password)) => Some(
             Credential::builder()
                 .username(username.to_owned())
-                .password(non_empty(args.node_password.as_deref()).map(str::to_owned))
+                .password(password.to_owned())
                 .source(
                     non_empty(args.node_auth_source.as_deref())
-                        .unwrap_or(&args.auth_source)
-                        .to_owned(),
+                        .or(auth_source)
+                        .map(str::to_owned),
                 )
                 .build(),
         ),
-        None => {
-            if non_empty(args.node_password.as_deref()).is_some() {
-                log::warn!("--node-password given without --node-username: ignored");
-            }
+        // Falling back to --username would poll the members as another user.
+        (Some(_), None) if args.all_nodes => {
+            return Err("--node-username needs --node-password".to_owned());
+        }
+        (Some(_), None) => {
+            log::warn!("--node-username given without --node-password: ignored");
             None
         }
+        (None, Some(_)) => {
+            log::warn!("--node-password given without --node-username: ignored");
+            None
+        }
+        (None, None) => None,
     };
     if node_credential.is_some() && !args.all_nodes {
         log::warn!("--node-username only applies with --all-nodes");
@@ -493,6 +503,31 @@ mod tests {
         let node = config.node_credential.unwrap();
         assert_eq!(node.username.as_deref(), Some("shard-user"));
         assert_eq!(node.source.as_deref(), Some("admin2"));
+    }
+
+    #[test]
+    fn node_username_needs_a_password() {
+        // An explicit empty password, so that MONGODB_NODE_PASSWORD in the
+        // environment does not count.
+        let a = args(&[
+            "--host",
+            "localhost",
+            "--all-nodes",
+            "--node-username",
+            "shard-user",
+            "--node-password",
+            "",
+        ]);
+        assert!(connect_config(&a).unwrap_err().contains("--node-password"));
+        let a = args(&[
+            "--host",
+            "localhost",
+            "--node-username",
+            "shard-user",
+            "--node-password",
+            "",
+        ]);
+        assert!(connect_config(&a).unwrap().node_credential.is_none());
     }
 
     #[test]

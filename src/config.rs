@@ -2,7 +2,7 @@
 //! compatible with the file written by the Python version.
 
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
@@ -79,22 +79,53 @@ impl ConfigStore {
 
     /// Writes atomically: to a temporary file next to the target, then renamed.
     /// A symlinked file (e.g. managed with dotfiles) is written through: its
-    /// target is replaced, not the link.
+    /// target is replaced, not the link. The replaced file keeps its
+    /// permissions; a new one gets the default mode (0666 minus the umask).
     fn write(&self, value: &Value) -> io::Result<()> {
-        let path = match fs::canonicalize(&self.path) {
-            Ok(target) => target,
-            Err(_) => {
-                if let Some(dir) = self.path.parent() {
-                    fs::create_dir_all(dir)?;
-                }
-                self.path.clone()
-            }
+        let path = self.resolve_target()?;
+        let dir = match path.parent() {
+            Some(dir) if !dir.as_os_str().is_empty() => dir,
+            _ => Path::new("."),
         };
         let mut text = serde_json::to_string_pretty(value).map_err(io::Error::other)?;
         text.push('\n');
-        let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, text)?;
-        fs::rename(&tmp, &path)
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(".config.json.");
+        // Temporary files are owner-only by default.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(fs::Permissions::from_mode(0o666));
+        }
+        let mut file = builder.tempfile_in(dir)?;
+        if let Ok(metadata) = fs::metadata(&path) {
+            file.as_file().set_permissions(metadata.permissions())?;
+        }
+        file.write_all(text.as_bytes())?;
+        file.persist(&path).map(drop).map_err(|e| e.error)
+    }
+
+    /// The file to replace: `path`, or the file it links to. A dangling link
+    /// is followed (at most 8 hops) so that the write creates its target, and
+    /// the target's directory is created when missing.
+    fn resolve_target(&self) -> io::Result<PathBuf> {
+        if let Ok(target) = fs::canonicalize(&self.path) {
+            return Ok(target);
+        }
+        let mut path = self.path.clone();
+        for _ in 0..8 {
+            let Ok(link) = fs::read_link(&path) else {
+                break;
+            };
+            path = match path.parent() {
+                Some(dir) if !dir.as_os_str().is_empty() => dir.join(link),
+                _ => link,
+            };
+        }
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            fs::create_dir_all(dir)?;
+        }
+        Ok(path)
     }
 }
 
@@ -167,6 +198,34 @@ mod tests {
         let value: Value = serde_json::from_str(&fs::read_to_string(&real).unwrap()).unwrap();
         assert_eq!(value["theme"]["current_theme"], "gruvbox");
         assert_eq!(value["keep"], true);
+
+        // Also when the symlink target does not exist yet.
+        let fresh = dir.path().join("fresh-dotfiles.json");
+        let linked = ConfigStore::at(dir.path().join("linked.json"));
+        std::os::unix::fs::symlink(&fresh, linked.path()).unwrap();
+        linked.save_theme("nord").unwrap();
+        assert!(
+            fs::symlink_metadata(linked.path())
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(linked.load_theme().unwrap().as_deref(), Some("nord"));
+        assert!(fresh.is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_keeps_the_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_dir, store) = store();
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(store.path(), "{}").unwrap();
+        fs::set_permissions(store.path(), fs::Permissions::from_mode(0o664)).unwrap();
+        store.save_theme("nord").unwrap();
+        let mode = fs::metadata(store.path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o664);
     }
 
     #[test]

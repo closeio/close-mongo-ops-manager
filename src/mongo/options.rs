@@ -174,6 +174,11 @@ pub(crate) enum Users {
     Node,
 }
 
+/// What a direct client is created for: the server's address, the
+/// credential, and the replica set name it requires. Clients with the same
+/// key are interchangeable.
+pub(crate) type ClientKey = (String, Users, Option<String>);
+
 impl DirectClients {
     pub fn new(main: &MainOptions, node_credential: Option<Credential>) -> Self {
         let options = &main.options;

@@ -17,7 +17,6 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CRATE_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
-REPO_DIR=$(cd "$CRATE_DIR/.." && pwd)
 
 MACOS_TARGETS=(aarch64-apple-darwin)
 LINUX_TARGETS=(aarch64-unknown-linux-musl x86_64-unknown-linux-musl)
@@ -378,19 +377,10 @@ verify_linux() {
 
 # --- Packaging ---------------------------------------------------------------
 
-# first_file <path>...: the first of the paths that is a file, if any.
-first_file() {
-    local path
-    for path in "$@"; do
-        if [[ -f $path ]]; then
-            printf '%s\n' "$path"
-            return
-        fi
-    done
-}
-
-README=$(first_file "$CRATE_DIR/README.md" "$REPO_DIR/README.md")
-LICENSE=$(first_file "$CRATE_DIR/LICENSE" "$REPO_DIR/LICENSE")
+README=
+LICENSE=
+[[ ! -f $CRATE_DIR/README.md ]] || README=$CRATE_DIR/README.md
+[[ ! -f $CRATE_DIR/LICENSE ]] || LICENSE=$CRATE_DIR/LICENSE
 [[ -n $LICENSE ]] || warn "no LICENSE file found; the archives won't include one"
 
 # tar_dir <dir>: tar <dir> (relative to $WORK_DIR) to stdout without the

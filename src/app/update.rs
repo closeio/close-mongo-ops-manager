@@ -185,7 +185,7 @@ impl App {
                     .operations
                     .iter()
                     .find(|new| new.key == old.key)
-                    .is_some_and(|new| !same_operation(old, new))
+                    .is_some_and(|new| !old.identity().same_operation(&new.identity()))
             })
             .map(|old| old.key.clone())
             .collect();
@@ -280,18 +280,21 @@ impl App {
             self.quit(fx);
             return;
         }
+        // Unbound Ctrl/Alt/Super combos do nothing: Ctrl+Y must not act as
+        // Y (confirming a kill), for example.
         if let Some(modal) = self.modal.take() {
-            self.modal = self.on_modal_key(modal, key, now, fx);
+            self.modal = if has_command_modifier(&key) {
+                Some(modal)
+            } else {
+                self.on_modal_key(modal, key, now, fx)
+            };
             return;
         }
-        match self.focus {
-            Focus::Table => self.on_table_key(key, now, fx),
-            Focus::Filter(field) => self.on_filter_key(field, key, now, fx),
-            Focus::ClearButton => self.on_clear_button_key(key, now, fx),
+        if let Focus::Filter(field) = self.focus
+            && self.edit_filter(field, key, now)
+        {
+            return;
         }
-    }
-
-    fn on_table_key(&mut self, key: KeyEvent, now: Instant, fx: &mut Effects) {
         if let Some(action) = global_action(&key) {
             self.perform(action, now, fx);
             return;
@@ -299,6 +302,14 @@ impl App {
         if has_command_modifier(&key) {
             return;
         }
+        match self.focus {
+            Focus::Table => self.on_table_key(key, now, fx),
+            Focus::Filter(field) => self.on_filter_key(field, key),
+            Focus::ClearButton => self.on_clear_button_key(key),
+        }
+    }
+
+    fn on_table_key(&mut self, key: KeyEvent, now: Instant, fx: &mut Effects) {
         let page = self.page_size();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.move_cursor(-1),
@@ -324,12 +335,12 @@ impl App {
         }
     }
 
-    fn on_filter_key(&mut self, field: FilterField, key: KeyEvent, now: Instant, fx: &mut Effects) {
+    /// Line editing keys, as in Textual's Input; they take precedence over
+    /// the application bindings while typing. Returns whether `key` was one.
+    fn edit_filter(&mut self, field: FilterField, key: KeyEvent, now: Instant) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let input = &mut self.filter_inputs[field.index()];
-        // Line editing keys, as in Textual's Input; they take precedence over
-        // the application bindings while typing.
         let edited = match key.code {
             KeyCode::Char('a') if ctrl => {
                 input.move_home();
@@ -364,16 +375,13 @@ impl App {
             KeyCode::Char(c) if !ctrl && !alt => Some(input.insert_char(c)),
             _ => None,
         };
-        if let Some(changed) = edited {
-            if changed {
-                self.filters_changed_at = Some(now);
-            }
-            return;
+        if edited == Some(true) {
+            self.filters_changed_at = Some(now);
         }
-        if let Some(action) = global_action(&key) {
-            self.perform(action, now, fx);
-            return;
-        }
+        edited.is_some()
+    }
+
+    fn on_filter_key(&mut self, field: FilterField, key: KeyEvent) {
         match key.code {
             KeyCode::Tab => self.focus = next_filter_focus(Focus::Filter(field)),
             KeyCode::BackTab => self.focus = previous_filter_focus(Focus::Filter(field)),
@@ -386,11 +394,7 @@ impl App {
         }
     }
 
-    fn on_clear_button_key(&mut self, key: KeyEvent, now: Instant, fx: &mut Effects) {
-        if let Some(action) = global_action(&key) {
-            self.perform(action, now, fx);
-            return;
-        }
+    fn on_clear_button_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Enter | KeyCode::Char(' ') => self.clear_filters(),
             KeyCode::Tab => self.focus = next_filter_focus(Focus::ClearButton),
@@ -599,7 +603,8 @@ impl App {
             let input = &mut self.filter_inputs[field.index()];
             let offset = input.scroll_offset(usize::from(rect.width));
             let column = pos.x.clamp(rect.x, rect.right()) - rect.x;
-            input.set_cursor(offset + usize::from(column));
+            let cursor = input.cursor_at_column(offset, usize::from(column));
+            input.set_cursor(cursor);
             self.focus = Focus::Filter(field);
             return;
         }
@@ -781,9 +786,10 @@ impl App {
         if secs == self.refresh_interval {
             return;
         }
+        let old_interval = self.interval();
         self.refresh_interval = secs;
-        if self.next_refresh_at.is_some() {
-            let base = self.last_refresh.map_or(now, |stats| stats.at);
+        if let Some(due) = self.next_refresh_at {
+            let base = due.checked_sub(old_interval).unwrap_or(now).min(now);
             self.next_refresh_at = Some(base + self.interval());
         }
     }
@@ -883,22 +889,6 @@ impl App {
             self.request_refresh();
         }
     }
-}
-
-/// Whether two listings with the same key are the same operation: same start
-/// time (within a second: it is computed from the running time), or the same
-/// connection (the start time of multi-statement writes moves with each
-/// statement). Unknown values compare equal.
-fn same_operation(a: &crate::model::Operation, b: &crate::model::Operation) -> bool {
-    let parse = |t: &Option<String>| {
-        t.as_deref()
-            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-    };
-    let same_start = match (parse(&a.current_op_time), parse(&b.current_op_time)) {
-        (Some(a), Some(b)) => (a - b).num_milliseconds().abs() <= 1000,
-        _ => true,
-    };
-    same_start || (!a.desc.is_empty() && a.desc == b.desc)
 }
 
 /// Application-wide key bindings.

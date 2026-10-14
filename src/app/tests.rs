@@ -466,7 +466,19 @@ fn kill_dialog_buttons_switch_focus() {
     let mut h = Harness::connected(three_ops());
     h.key(KeyCode::Char(' '));
     h.ctrl('k');
-    h.key(KeyCode::Left);
+    let fx = h.key(KeyCode::Left);
+    assert!(fx.is_empty());
+    assert!(matches!(
+        h.app.modal,
+        Some(Modal::KillConfirm {
+            yes_focused: true,
+            ..
+        })
+    ));
+    // Command modifiers (Ctrl+Y, Ctrl+N, Ctrl+L) do not trigger dialog keys.
+    assert!(h.ctrl('y').is_empty());
+    assert!(h.ctrl('n').is_empty());
+    assert!(h.ctrl('l').is_empty());
     assert!(matches!(
         h.app.modal,
         Some(Modal::KillConfirm {
@@ -553,6 +565,17 @@ fn selection_is_dropped_when_an_opid_is_reused() {
         .map(|op| op.opid.to_string())
         .collect();
     assert_eq!(selected, vec!["1", "3"]);
+
+    // Different host (e.g. replica set failover) or different connection
+    // without a start time also drops the selection.
+    let generation = fetch_generation(&h.ctrl('r')).unwrap();
+    let mut other_host = operation_running(1, 3);
+    other_host.host = Some("db2:27017".into());
+    let mut other_conn_no_start = operation_running(3, 22);
+    other_conn_no_start.current_op_time = None;
+    other_conn_no_start.desc = "conn88".into();
+    h.fetched(generation, vec![other_host, other_conn_no_start]);
+    assert!(h.app.selected.is_empty());
 }
 
 #[test]
@@ -725,7 +748,11 @@ fn help_and_logs_modals() {
     ));
     // Bindings other than quit are inactive while a dialog is open.
     h.ctrl('t');
-    assert!(matches!(h.app.modal, Some(Modal::Logs { .. })));
+    h.ctrl('k');
+    assert!(matches!(
+        h.app.modal,
+        Some(Modal::Logs { follow: true, .. })
+    ));
     h.key(KeyCode::Esc);
     assert!(h.app.modal.is_none());
 }

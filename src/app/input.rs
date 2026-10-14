@@ -154,14 +154,71 @@ impl TextInput {
         true
     }
 
-    /// First visible char when the input is `width` chars wide, keeping the
+    /// First visible char when the input is `width` cells wide, keeping the
     /// cursor visible.
     pub fn scroll_offset(&self, width: usize) -> usize {
         if width == 0 {
             return self.cursor;
         }
-        (self.cursor + 1).saturating_sub(width)
+        let before = &self.value[..self.byte_index(self.cursor)];
+        let mut offset = self.cursor;
+        let mut index = self.cursor;
+        for (at, c) in before.char_indices().rev() {
+            if text_width(&before[at..]) >= width {
+                break;
+            }
+            index -= 1;
+            if !joins_previous(c) {
+                offset = index;
+            }
+        }
+        offset
     }
+
+    /// The value from char `offset` on: what the input scrolled to `offset`
+    /// shows.
+    pub fn visible(&self, offset: usize) -> &str {
+        &self.value[self.byte_index(offset)..]
+    }
+
+    /// Cells from the start of the view scrolled to `offset` to the cursor.
+    pub fn cursor_column(&self, offset: usize) -> usize {
+        let start = self.byte_index(offset.min(self.cursor));
+        text_width(&self.value[start..self.byte_index(self.cursor)])
+    }
+
+    /// Cursor position for a click `column` cells from the start of the view
+    /// scrolled to `offset`.
+    pub fn cursor_at_column(&self, offset: usize, column: usize) -> usize {
+        let visible = self.visible(offset);
+        let mut cursor = offset.min(self.len());
+        let mut index = cursor;
+        let mut chars = visible.char_indices().peekable();
+        while let Some((at, c)) = chars.next() {
+            if text_width(&visible[..at + c.len_utf8()]) > column {
+                break;
+            }
+            index += 1;
+            if chars.peek().is_none_or(|&(_, next)| !joins_previous(next)) {
+                cursor = index;
+            }
+        }
+        cursor
+    }
+}
+
+/// Display width of `s`, in terminal cells, as ratatui draws it. Text is
+/// measured as a whole, not char by char: emoji sequences and variation
+/// selectors change the width of what precedes them.
+fn text_width(s: &str) -> usize {
+    ratatui::text::Span::raw(s).width()
+}
+
+/// Whether `c` is drawn with the char before it (variation selector, joiner,
+/// combining mark): the view does not start at one, and a click does not put
+/// the cursor before one.
+fn joins_previous(c: char) -> bool {
+    text_width(c.encode_utf8(&mut [0; 4])) == 0
 }
 
 #[cfg(test)]
@@ -244,5 +301,21 @@ mod tests {
         let mut j = i.clone();
         j.move_home();
         assert_eq!(j.scroll_offset(5), 0);
+
+        let wide = input("日本語");
+        assert_eq!(wide.scroll_offset(5), 1);
+        assert_eq!(wide.visible(1), "本語");
+        assert_eq!(wide.cursor_column(1), 4);
+        assert_eq!(wide.cursor_at_column(0, 2), 1);
+        assert_eq!(wide.cursor_at_column(1, 2), 2);
+
+        // U+FE0F makes the heart 2 cells wide, though it has no width of its
+        // own.
+        let emoji = input("\u{2764}\u{fe0f}x");
+        assert_eq!(emoji.cursor_column(0), 3);
+        assert_eq!(emoji.scroll_offset(4), 0);
+        assert_eq!(emoji.scroll_offset(3), 2);
+        assert_eq!(emoji.cursor_at_column(0, 1), 0);
+        assert_eq!(emoji.cursor_at_column(0, 2), 2);
     }
 }

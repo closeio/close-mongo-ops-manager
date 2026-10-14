@@ -1,4 +1,8 @@
 /target
 /dist
-# The repo root ignores build/ (Python packaging); keep the builder image.
-!/docker/build/
+*.log
+.DS_Store
+.env
+.vscode/
+.claude/
+

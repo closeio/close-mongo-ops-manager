@@ -1,14 +1,9 @@
 //! Conversion of `$currentOp` documents into [`Operation`]s.
 
-use chrono::{DateTime, FixedOffset, SecondsFormat, TimeDelta};
+use chrono::{DateTime, SecondsFormat, TimeDelta};
 use mongodb::bson::{Bson, Document};
 
 use crate::model::{MAX_OPERATIONS, NodeRole, OpId, OpKey, OpSource, Operation};
-
-/// Two start times computed from different `$currentOp` reports of the same
-/// operation differ by a few milliseconds at most. A different operation that
-/// reuses the opid (after a restart or a failover) started at another time.
-const START_TIME_TOLERANCE: TimeDelta = TimeDelta::seconds(1);
 
 /// Where a batch of documents was listed.
 #[derive(Debug, Clone)]
@@ -129,18 +124,6 @@ pub(crate) fn start_time(doc: &Document) -> Option<String> {
     Some(start.to_rfc3339_opts(SecondsFormat::Millis, false))
 }
 
-/// Whether two start times from [`start_time`] belong to the same operation.
-pub(crate) fn same_start_time(a: &str, b: &str) -> bool {
-    match (parse_time(a), parse_time(b)) {
-        (Some(a), Some(b)) => (a - b).abs() <= START_TIME_TOLERANCE,
-        _ => a == b,
-    }
-}
-
-fn parse_time(value: &str) -> Option<DateTime<FixedOffset>> {
-    DateTime::parse_from_rfc3339(value).ok()
-}
-
 /// Merges listings: longest running first, at most [`MAX_OPERATIONS`].
 /// Returns whether operations were dropped (or `truncated` already).
 pub(crate) fn merge_operations(
@@ -161,6 +144,7 @@ pub(crate) fn merge_operations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::same_start_time;
     use crate::testutil::operation_running;
     use mongodb::bson::doc;
 
@@ -400,23 +384,6 @@ mod tests {
         })
         .unwrap();
         assert!(same_start_time(&first, &second));
-    }
-
-    #[test]
-    fn same_start_time_tolerance() {
-        assert!(same_start_time(
-            "2026-10-08T16:29:11.101+00:00",
-            "2026-10-08T18:29:11.900+02:00"
-        ));
-        assert!(!same_start_time(
-            "2026-10-08T16:29:11.101+00:00",
-            "2026-10-08T16:29:12.200+00:00"
-        ));
-        assert!(same_start_time("not a date", "not a date"));
-        assert!(!same_start_time(
-            "not a date",
-            "2026-10-08T16:29:11.101+00:00"
-        ));
     }
 
     #[test]

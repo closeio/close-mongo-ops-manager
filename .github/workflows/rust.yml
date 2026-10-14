@@ -3,15 +3,8 @@ name: Rust
 on:
   push:
     branches: ["**"]
-    # Path filters don't apply to tag pushes.
     tags: ["rust-v*"]
-    paths:
-      - "rust/**"
-      - ".github/workflows/rust.yml"
   pull_request:
-    paths:
-      - "rust/**"
-      - ".github/workflows/rust.yml"
   workflow_dispatch:
 
 permissions:
@@ -23,10 +16,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-
-defaults:
-  run:
-    working-directory: rust
 
 jobs:
   check:
@@ -46,8 +35,6 @@ jobs:
       # anywhere in the release pipeline.
       - if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: rust
       - name: Format
         run: cargo fmt --check
       - name: Clippy
@@ -56,7 +43,7 @@ jobs:
         run: cargo test --locked
       - name: Shellcheck release scripts
         if: runner.os == 'Linux'
-        run: shellcheck scripts/*.sh
+        run: shellcheck scripts/*.sh tests/docker/*.sh
 
   # Release binaries, on rust-v* tags and on demand. Deliberately uncached:
   # artifacts are always built from scratch, so a poisoned cache can't reach them.
@@ -84,7 +71,7 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
           if [ "rust-v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME doesn't match rust/Cargo.toml's version $version"
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml's version $version"
             exit 1
           fi
       - name: Install the toolchain from rust-toolchain.toml
@@ -102,7 +89,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-${{ matrix.target }}
-          path: rust/dist/*.tar.gz
+          path: dist/*.tar.gz
           if-no-files-found: error
           compression-level: 0
 

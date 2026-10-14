@@ -3,6 +3,7 @@
 use std::fmt;
 use std::time::Duration;
 
+use chrono::{DateTime, TimeDelta};
 use mongodb::bson::{Bson, Document};
 
 /// Maximum number of operations kept per refresh. The slowest operations are
@@ -205,6 +206,17 @@ impl Operation {
         }
     }
 
+    /// What tells this operation apart from another with the same opid.
+    /// `desc` carries the connection number.
+    pub fn identity(&self) -> OpIdentity<'_> {
+        OpIdentity {
+            host: self.host.as_deref(),
+            start: self.current_op_time.as_deref(),
+            connection: Some(self.desc.as_str()).filter(|d| !d.is_empty()),
+            connection_id: None,
+        }
+    }
+
     /// Comma-separated effective users, or `"N/A"`.
     pub fn users_display(&self) -> String {
         let users: Vec<&str> = self
@@ -219,6 +231,87 @@ impl Operation {
             users.join(", ")
         }
     }
+}
+
+/// Two start times computed from different `$currentOp` reports of the same
+/// operation differ by a few milliseconds at most. A different operation that
+/// reuses the opid (after a restart or a failover) started at another time.
+const START_TIME_TOLERANCE: TimeDelta = TimeDelta::seconds(1);
+
+/// What tells apart operations listed with the same opid: opids are
+/// per-server counters and get reused.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OpIdentity<'a> {
+    /// `host`.
+    pub host: Option<&'a str>,
+    /// Start time (`currentOpTime - microsecs_running`, RFC 3339).
+    pub start: Option<&'a str>,
+    /// `desc`, e.g. `"conn123"`.
+    pub connection: Option<&'a str>,
+    /// `connectionId`.
+    pub connection_id: Option<i64>,
+}
+
+impl OpIdentity<'_> {
+    /// Whether `self` and `other` are the same operation: on the same host
+    /// (when both are known), and with the same start time (within a second)
+    /// or on the same connection. Operations that cannot be told apart are
+    /// the same.
+    ///
+    /// The start time alone is not enough: it moves when the wall clock is
+    /// stepped, and a multi-statement update or delete restarts
+    /// `microsecs_running` with every statement.
+    pub fn same_operation(&self, other: &OpIdentity<'_>) -> bool {
+        if let (Some(a), Some(b)) = (self.host, other.host)
+            && !a.eq_ignore_ascii_case(b)
+        {
+            return false;
+        }
+        let start = self
+            .start
+            .zip(other.start)
+            .map(|(a, b)| same_start_time(a, b));
+        match (start, self.same_connection(other)) {
+            // Nothing to tell them apart.
+            (None, None) => true,
+            (start, connection) => start == Some(true) || connection == Some(true),
+        }
+    }
+
+    /// Whether both run on the same connection, comparing `desc` and the
+    /// connection number when known. `None` when it cannot be told.
+    fn same_connection(&self, other: &OpIdentity<'_>) -> Option<bool> {
+        let by_desc = self.connection.zip(other.connection).map(|(a, b)| a == b);
+        let by_number = self
+            .connection_number()
+            .zip(other.connection_number())
+            .map(|(a, b)| a == b);
+        match (by_desc, by_number) {
+            (None, None) => None,
+            (by_desc, by_number) => Some(by_desc != Some(false) && by_number != Some(false)),
+        }
+    }
+
+    /// `connectionId`, or the number in `desc`.
+    fn connection_number(&self) -> Option<i64> {
+        self.connection_id
+            .or_else(|| connection_number(self.connection?))
+    }
+}
+
+/// Whether two start times belong to the same operation: within
+/// [`START_TIME_TOLERANCE`], or equal when they cannot be parsed.
+pub fn same_start_time(a: &str, b: &str) -> bool {
+    let parse = |t: &str| DateTime::parse_from_rfc3339(t).ok();
+    match (parse(a), parse(b)) {
+        (Some(a), Some(b)) => (a - b).abs() <= START_TIME_TOLERANCE,
+        _ => a == b,
+    }
+}
+
+/// `123` for `"conn123"`.
+pub fn connection_number(desc: &str) -> Option<i64> {
+    desc.strip_prefix("conn")?.parse().ok()
 }
 
 /// Text filters from the filter bar. Every non-empty value is matched as a
@@ -363,6 +456,16 @@ pub struct KillRequest {
 }
 
 impl KillRequest {
+    /// What tells the operation apart from another with the same opid.
+    pub fn identity(&self) -> OpIdentity<'_> {
+        OpIdentity {
+            host: self.host.as_deref(),
+            start: self.current_op_time.as_deref(),
+            connection: self.connection.as_deref(),
+            connection_id: None,
+        }
+    }
+
     pub fn from_operation(op: &Operation) -> Self {
         let command = op
             .raw
@@ -416,7 +519,7 @@ fn command_shape(command: &Document) -> Document {
         .iter()
         .enumerate()
         .map(|(i, (k, v))| {
-            let keep = i == 0 && matches!(v, Bson::String(_));
+            let keep = i == 0 && !k.starts_with('$') && matches!(v, Bson::String(_));
             (k.clone(), if keep { v.clone() } else { redact(v) })
         })
         .collect()
@@ -476,6 +579,23 @@ impl KillReport {
 mod tests {
     use super::*;
     use crate::testutil::sample_operation;
+
+    #[test]
+    fn same_start_time_tolerance() {
+        assert!(same_start_time(
+            "2026-10-08T16:29:11.101+00:00",
+            "2026-10-08T18:29:11.900+02:00"
+        ));
+        assert!(!same_start_time(
+            "2026-10-08T16:29:11.101+00:00",
+            "2026-10-08T16:29:12.200+00:00"
+        ));
+        assert!(same_start_time("not a date", "not a date"));
+        assert!(!same_start_time(
+            "not a date",
+            "2026-10-08T16:29:11.101+00:00"
+        ));
+    }
 
     #[test]
     fn opid_from_bson() {
@@ -621,6 +741,14 @@ mod tests {
         assert!(req.description.contains("\"$set\""));
         assert!(!req.description.contains("s3cret"));
         assert!(!req.description.contains("hash"));
+
+        // Truncated commands store the raw stringified command under "$truncated".
+        op.raw = mongodb::bson::doc! {
+            "command": { "$truncated": "{ insert: \"users\", documents: [{ pw: \"s3cret\" }] }" }
+        };
+        let req = KillRequest::from_operation(&op);
+        assert!(req.description.contains("\"$truncated\": \"?\""));
+        assert!(!req.description.contains("s3cret"));
     }
 
     #[test]

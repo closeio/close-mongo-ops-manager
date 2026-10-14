@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Rust rewrite (ratatui + async MongoDB driver + tokio) of the Python/Textual app in the parent directory. `../CLAUDE.md` describes that Python app, not this crate. The rewrite has to stay compatible with it: CLI options and env vars, key bindings, theme names and colors, and the config file at `~/.config/close-mongo-ops-manager/config.json` (or `$XDG_CONFIG_HOME/...` when absolute). `README.md` lists the options and keys, and documents what changed from the Python version.
+Rust rewrite (ratatui + async MongoDB driver + tokio) of the original Python/Textual app. The rewrite stays compatible with it: CLI options and env vars, key bindings, theme names and colors, and the config file at `~/.config/close-mongo-ops-manager/config.json` (or `$XDG_CONFIG_HOME/...` when absolute). `README.md` lists the options and keys, and documents what changed from the Python version.
 
 ## Commands
 
-Run everything from `rust/`. `rust-toolchain.toml` pins the toolchain (1.99.0); the MSRV is 1.88 (edition 2024).
+`rust-toolchain.toml` pins the toolchain (1.99.0); the MSRV is 1.94.1 (edition 2024).
 
 ```shell
 cargo build
@@ -20,7 +20,7 @@ cargo run -- --host 127.0.0.1                 # or --uri 'mongodb://...' [--all-
 make lint | make test | make dist             # dist = scripts/build-release.sh (see --help)
 ```
 
-CI (`../.github/workflows/rust.yml`) runs fmt, clippy with `-D warnings`, `cargo test --locked`, and `shellcheck scripts/*.sh`. Pushing a `rust-v<version>` tag builds the release binaries and fails if the tag doesn't match the version in `Cargo.toml`.
+CI (`.github/workflows/rust.yml`) runs fmt, clippy with `-D warnings`, `cargo test --locked`, and `shellcheck scripts/*.sh tests/docker/*.sh`. Pushing a `rust-v<version>` tag builds the release binaries and fails if the tag doesn't match the version in `Cargo.toml`.
 
 ### Integration tests (real MongoDB cluster in Docker)
 

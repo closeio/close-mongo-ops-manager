@@ -7,7 +7,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Padding};
 
 use super::style;
-use super::text::{to_u16, truncate, width};
+use super::text::{to_u16, truncate};
 use super::widgets::with_hint;
 use crate::app::{App, FilterField, Focus, TextInput};
 use crate::theme::Palette;
@@ -99,18 +99,12 @@ fn render_input(
             style::muted(p),
         )
     } else {
-        Line::raw(input.value().chars().skip(offset).collect::<String>())
+        Line::raw(input.visible(offset))
     };
     frame.render_widget(line, text_area);
 
     if focused {
-        let before: String = input
-            .value()
-            .chars()
-            .skip(offset)
-            .take(input.cursor().saturating_sub(offset))
-            .collect();
-        let x = to_u16(width(&before)).min(text_area.width - 1);
+        let x = to_u16(input.cursor_column(offset)).min(text_area.width - 1);
         frame.set_cursor_position(Position::new(text_area.x + x, text_area.y));
     }
     text_area

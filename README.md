@@ -4,7 +4,7 @@ Monitor and kill MongoDB operations from the terminal. A single self-contained
 binary, built with the official [MongoDB Rust driver](https://github.com/mongodb/mongo-rust-driver)
 (async) and [ratatui](https://github.com/ratatui/ratatui).
 
-This is a rewrite of the Python/Textual application in the parent directory. It
+This is a Rust rewrite of the original Python/Textual application. It
 keeps its options, key bindings, themes and configuration file, and adds better
 support for sharded clusters.
 
@@ -88,7 +88,7 @@ close-mongo-ops-manager --uri mongodb://mongos1:27017,mongos2:27017 --all-nodes
 | `--load-balanced` | | off | Connect through a load balancer |
 | `--all-nodes` | `MONGODB_ALL_NODES` | off | Poll every cluster member directly |
 | `--node-username` | `MONGODB_NODE_USERNAME` | `--username` | Username for direct member connections |
-| `--node-password` | `MONGODB_NODE_PASSWORD` | | Password for `--node-username` |
+| `--node-password` | `MONGODB_NODE_PASSWORD` | | Password for `--node-username` (required with it) |
 | `--node-auth-source` | `MONGODB_NODE_AUTH_SOURCE` | `--auth-source` | Auth database for `--node-username` |
 | `--timeout` | `MONGODB_TIMEOUT` | `5` | Seconds allowed for connecting and each round trip |
 | `--log-file` | `CLOSE_MONGO_OPS_MANAGER_LOG_FILE` | `close_mongo_ops_manager.log` | Log file (replaced by a new owner-only file at startup) |
@@ -152,11 +152,10 @@ with `Ctrl+L`.
 
 ## Development
 
-Requires Rust 1.88 or newer (`rust-toolchain.toml` pins the version used for
+Requires Rust 1.94.1 or newer (`rust-toolchain.toml` pins the version used for
 releases).
 
 ```shell
-cd rust
 cargo test                                   # unit tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
