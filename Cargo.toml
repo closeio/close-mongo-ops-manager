@@ -1,0 +1,46 @@
+[package]
+name = "close-mongo-ops-manager"
+version = "0.6.0"
+edition = "2024"
+rust-version = "1.94.1"
+description = "Monitor and kill MongoDB operations"
+authors = ["Vicenç Juan Tomàs Monserrat <vicenc.monserrat@close.com>"]
+license = "MIT"
+repository = "https://github.com/closeio/close-mongo-ops-manager"
+readme = "README.md"
+keywords = ["mongodb", "operations", "tui"]
+categories = ["command-line-utilities", "database"]
+publish = false
+
+[[bin]]
+name = "close-mongo-ops-manager"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+futures = "0.3"
+log = { version = "0.4", features = ["std"] }
+mongodb = { version = "3.9.1", features = [
+    "cert-key-password",
+    "snappy-compression",
+    "zlib-compression",
+    "zstd-compression",
+] }
+ratatui = { version = "0.30.2", default-features = false, features = [
+    "crossterm",
+    "layout-cache",
+    "underline-color",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+strip = true

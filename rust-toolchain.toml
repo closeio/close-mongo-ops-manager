@@ -1,0 +1,13 @@
+# Toolchain for development, CI and release builds (the Linux builder image is
+# rust:<channel>-alpine, see scripts/build-release.sh).
+#
+# Release targets are deliberately not listed under `targets`: rustup would
+# download all of them on the first cargo command in this directory, and fail
+# offline, although Linux targets are built in Docker and most work only needs
+# the host target. scripts/build-release.sh adds the macOS target if needed:
+#   aarch64-apple-darwin,
+#   aarch64-unknown-linux-musl, x86_64-unknown-linux-musl (in Docker)
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
